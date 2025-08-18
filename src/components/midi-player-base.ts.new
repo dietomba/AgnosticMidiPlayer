@@ -1,0 +1,378 @@
+import { MidiPlayerOptions } from '../interfaces/midi-player-options';
+import { MidiEvent } from '../interfaces/midi-event';
+import { MidiEventType, MetaEventType } from '../interfaces/midi-event-types';
+import { MidiParser } from '../utils/midi-parser';
+import { SimpleSynthesizer } from '../utils/simple-synthesizer';
+import { MidiTiming } from '../utils/midi-timing';
+
+export class MidiPlayerBase extends HTMLElement {
+    protected synth: SimpleSynthesizer;
+    protected isPlaying: boolean = false;
+    protected currentTick: number = 0;    // Posizione corrente in ticks
+    protected currentTime: number = 0;     // Posizione corrente in ms
+    protected duration: number = 0;        // Durata totale in ms
+    protected options: MidiPlayerOptions = {};
+    protected midiData: ArrayBuffer | null = null;
+    protected parsedMidiEvents: MidiEvent[] = [];
+    protected playbackStartTime: number = 0;
+    protected schedulerInterval: number | null = null;
+    protected timing: MidiTiming | null = null;
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this.synth = new SimpleSynthesizer();
+    }
+
+    static get observedAttributes() {
+        return ['src', 'autoplay', 'loop', 'volume'];
+    }
+
+    async connectedCallback() {
+        // Se src è fornito, carica il file MIDI
+        const src = this.getAttribute('src');
+        if (src) {
+            await this.loadMidiFile(src);
+        }
+
+        // Se autoplay è attivo, inizia la riproduzione
+        if (this.getAttribute('autoplay') !== null) {
+            this.play();
+        }
+    }
+
+    disconnectedCallback() {
+        // Ferma la riproduzione e pulisci le risorse
+        this.stop();
+        this.synth.allNotesOff();
+    }
+
+    attributeChangedCallback(name: string, oldValue: string, newValue: string) {
+        if (oldValue === newValue) return;
+
+        switch (name) {
+            case 'src':
+                this.loadMidiFile(newValue);
+                break;
+            case 'autoplay':
+                if (newValue !== null && this.midiData) {
+                    this.play();
+                }
+                break;
+            case 'loop':
+                this.options.loop = newValue !== null;
+                break;
+            case 'volume':
+                const volume = parseFloat(newValue);
+                this.options.volume = volume;
+                this.synth.setVolume(volume);
+                break;
+        }
+    }
+
+    protected async loadMidiFile(src: string): Promise<void> {
+        try {
+            this.dispatchEvent(new CustomEvent('loadstart'));
+            
+            const response = await fetch(src);
+            this.midiData = await response.arrayBuffer();
+            
+            // Resetta lo stato corrente
+            this.stop();
+            this.currentTime = 0;
+            this.currentTick = 0;
+            this.duration = 0;
+            this.parsedMidiEvents = [];
+            
+            // Parsa il file MIDI
+            this.parsedMidiEvents = this.parseMidiFile(this.midiData);
+            
+            // Calcola la durata totale dall'ultimo evento
+            if (this.parsedMidiEvents.length > 0) {
+                const lastEvent = this.parsedMidiEvents[this.parsedMidiEvents.length - 1];
+                this.duration = lastEvent.absoluteTime!;
+            }
+            
+            this.dispatchEvent(new CustomEvent('loadcomplete', {
+                detail: { 
+                    duration: this.duration,
+                    totalTicks: this.timing?.ticksPerQuarterNote 
+                }
+            }));
+            
+            // Se autoplay è attivo, inizia la riproduzione
+            if (this.options.autoplay) {
+                this.play();
+            }
+        } catch (error) {
+            this.dispatchEvent(new CustomEvent('error', { detail: error }));
+        }
+    }
+
+    public async play(): Promise<void> {
+        if (!this.midiData || !this.timing || this.isPlaying) return;
+        
+        this.isPlaying = true;
+        this.playbackStartTime = performance.now() - this.currentTime;
+        this.startScheduler();
+        this.dispatchEvent(new CustomEvent('play'));
+    }
+
+    public pause(): void {
+        if (!this.isPlaying) return;
+        
+        this.isPlaying = false;
+        this.currentTime = performance.now() - this.playbackStartTime;
+        if (this.timing) {
+            this.currentTick = this.timing.millisecondsToTicks(this.currentTime);
+        }
+        this.stopScheduler();
+        this.synth.allNotesOff();
+        this.dispatchEvent(new CustomEvent('pause'));
+    }
+
+    public stop(): void {
+        if (!this.isPlaying && this.currentTime === 0) return;
+        
+        this.isPlaying = false;
+        this.currentTime = 0;
+        this.currentTick = 0;
+        this.stopScheduler();
+        this.synth.allNotesOff();
+        this.dispatchEvent(new CustomEvent('stop'));
+    }
+
+    public seek(time: number): void {
+        if (!this.timing) return;
+        
+        const wasPlaying = this.isPlaying;
+        if (wasPlaying) {
+            this.pause();
+        }
+        
+        // Converti il tempo in ticks
+        this.currentTime = Math.max(0, Math.min(time, this.duration));
+        this.currentTick = this.timing.millisecondsToTicks(this.currentTime);
+        
+        if (wasPlaying) {
+            this.play();
+        }
+        
+        this.dispatchEvent(new CustomEvent('timeupdate', { 
+            detail: { 
+                currentTime: this.currentTime,
+                currentTick: this.currentTick,
+                duration: this.duration 
+            }
+        }));
+    }
+
+    protected parseMidiFile(data: ArrayBuffer): MidiEvent[] {
+        const parser = new MidiParser(data);
+        const events: MidiEvent[] = [];
+        let absoluteTick = 0;
+        
+        // Leggi l'header MIDI
+        const headerChunk = parser.readString(4);
+        if (headerChunk !== 'MThd') {
+            throw new Error('Invalid MIDI file: missing MThd header');
+        }
+        
+        const headerLength = parser.readUint32();
+        const format = parser.readUint16();
+        const trackCount = parser.readUint16();
+        const timeDivision = parser.readUint16();
+
+        // Inizializza il sistema di timing
+        this.timing = new MidiTiming(timeDivision);
+        
+        // Per ogni traccia
+        for (let track = 0; track < trackCount; track++) {
+            const trackChunk = parser.readString(4);
+            if (trackChunk !== 'MTrk') {
+                throw new Error(`Invalid MIDI file: missing MTrk header for track ${track}`);
+            }
+            
+            const trackLength = parser.readUint32();
+            const trackEnd = parser.position + trackLength;
+            absoluteTick = 0; // Reset per ogni traccia
+            
+            // Leggi gli eventi della traccia
+            while (parser.position < trackEnd) {
+                const deltaTime = parser.readVarInt();
+                absoluteTick += deltaTime;
+                
+                let eventType = parser.readUint8();
+                
+                // Gestione Running Status
+                if ((eventType & 0x80) === 0) {
+                    parser.position--;
+                    eventType = events[events.length - 1].type;
+                }
+                
+                if (eventType === MidiEventType.META) {
+                    const metaType = parser.readUint8();
+                    const length = parser.readVarInt();
+                    const data = new Uint8Array(length);
+                    
+                    for (let i = 0; i < length; i++) {
+                        data[i] = parser.readUint8();
+                    }
+                    
+                    // Se è un evento di tempo, aggiornalo nel timing
+                    if (metaType === MetaEventType.SET_TEMPO) {
+                        const tempo = (data[0] << 16) | (data[1] << 8) | data[2];
+                        this.timing?.addTempoChange(absoluteTick, tempo);
+                    }
+                    
+                    events.push({
+                        type: eventType,
+                        subtype: metaType,
+                        deltaTime,
+                        absoluteTick,
+                        data: Array.from(data)
+                    });
+                    
+                    if (metaType === MetaEventType.END_OF_TRACK) {
+                        break;
+                    }
+                }
+                else if (eventType === MidiEventType.SYSTEM_EXCLUSIVE) {
+                    const length = parser.readVarInt();
+                    parser.skip(length);
+                }
+                else {
+                    // Eventi MIDI Channel
+                    const channel = eventType & 0x0F;
+                    const command = eventType & 0xF0;
+                    
+                    const data = [command | channel];
+                    
+                    // Leggi i dati in base al tipo di comando
+                    switch (command) {
+                        case MidiEventType.NOTE_OFF:
+                        case MidiEventType.NOTE_ON:
+                        case MidiEventType.NOTE_AFTERTOUCH:
+                        case MidiEventType.CONTROLLER:
+                        case MidiEventType.PITCH_BEND:
+                            data.push(parser.readUint8());
+                            data.push(parser.readUint8());
+                            break;
+                            
+                        case MidiEventType.PROGRAM_CHANGE:
+                        case MidiEventType.CHANNEL_AFTERTOUCH:
+                            data.push(parser.readUint8());
+                            break;
+                    }
+                    
+                    events.push({
+                        type: command,
+                        channel,
+                        deltaTime,
+                        absoluteTick,
+                        data
+                    });
+                }
+            }
+        }
+        
+        // Ordina gli eventi per tick e calcola i tempi assoluti
+        const sortedEvents = events.sort((a, b) => a.absoluteTick - b.absoluteTick);
+        
+        // Calcola i tempi assoluti per tutti gli eventi
+        for (const event of sortedEvents) {
+            event.absoluteTime = this.timing?.ticksToMilliseconds(event.absoluteTick);
+        }
+        
+        return sortedEvents;
+    }
+
+    protected startScheduler(): void {
+        if (this.schedulerInterval !== null || !this.timing) return;
+        
+        const lookAhead = 100; // ms
+        const scheduleAhead = 200; // ms
+        
+        this.schedulerInterval = window.setInterval(() => {
+            const currentTime = performance.now() - this.playbackStartTime;
+            const endTime = currentTime + scheduleAhead;
+            
+            // Trova e schedula gli eventi nel range di tempo
+            for (const event of this.parsedMidiEvents) {
+                if (event.absoluteTime! >= currentTime && event.absoluteTime! < endTime) {
+                    this.scheduleEvent(event);
+                }
+            }
+            
+            // Aggiorna il tempo corrente e i ticks
+            this.currentTime = currentTime;
+            this.currentTick = this.timing.millisecondsToTicks(currentTime);
+            
+            this.dispatchEvent(new CustomEvent('timeupdate', { 
+                detail: { 
+                    currentTime: this.currentTime,
+                    currentTick: this.currentTick,
+                    duration: this.duration 
+                }
+            }));
+            
+            // Controlla se la riproduzione è finita
+            if (currentTime >= this.duration) {
+                if (this.options.loop) {
+                    this.seek(0);
+                } else {
+                    this.stop();
+                    this.dispatchEvent(new CustomEvent('ended'));
+                }
+            }
+        }, lookAhead);
+    }
+
+    protected stopScheduler(): void {
+        if (this.schedulerInterval !== null) {
+            window.clearInterval(this.schedulerInterval);
+            this.schedulerInterval = null;
+        }
+    }
+
+    protected scheduleEvent(event: MidiEvent): void {
+        if (!event.absoluteTime) return;
+        
+        const delay = event.absoluteTime - (performance.now() - this.playbackStartTime);
+        
+        setTimeout(() => {
+            if (!this.isPlaying) return;
+            
+            // Processa l'evento MIDI
+            if (event.type === MidiEventType.NOTE_ON && event.data) {
+                const [, note, velocity] = event.data;
+                if (velocity > 0) {
+                    this.synth.noteOn(event.channel!, note, velocity);
+                } else {
+                    this.synth.noteOff(event.channel!, note);
+                }
+            }
+            else if (event.type === MidiEventType.NOTE_OFF && event.data) {
+                const [, note] = event.data;
+                this.synth.noteOff(event.channel!, note);
+            }
+        }, delay);
+    }
+
+    // Getter pubblici
+    public get currentTimeValue(): number {
+        return this.currentTime;
+    }
+
+    public get currentTickValue(): number {
+        return this.currentTick;
+    }
+
+    public get durationValue(): number {
+        return this.duration;
+    }
+
+    public get isPlayingValue(): boolean {
+        return this.isPlaying;
+    }
+}

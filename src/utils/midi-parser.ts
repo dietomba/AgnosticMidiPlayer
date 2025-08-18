@@ -42,7 +42,7 @@ export class MidiParser {
   }
 
   public readString(length: number): string {
-    let str = "";
+    let str = '';
     for (let i = 0; i < length; i++) {
       str += String.fromCharCode(this.readUint8());
     }

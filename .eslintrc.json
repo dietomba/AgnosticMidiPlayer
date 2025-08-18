@@ -1,0 +1,65 @@
+{
+    "root": true,
+    "parser": "@typescript-eslint/parser",
+    "parserOptions": {
+        "project": "./tsconfig.json",
+        "ecmaVersion": 2020,
+        "sourceType": "module"
+    },
+    "env": {
+        "browser": true,
+        "es2020": true
+    },
+    "extends": [
+        "airbnb-base",
+        "airbnb-typescript/base",
+        "plugin:@typescript-eslint/recommended",
+        "plugin:prettier/recommended"
+    ],
+    "rules": {
+        "class-methods-use-this": "off",
+        "no-underscore-dangle": "off",
+        "@typescript-eslint/no-non-null-assertion": "off",
+        "@typescript-eslint/lines-between-class-members": [
+            "error",
+            {
+                "exceptAfterSingleLine": true
+            }
+        ],
+        "import/prefer-default-export": "off",
+        "max-classes-per-file": "off",
+        "no-bitwise": "off",
+        "no-plusplus": "off",
+        "no-restricted-syntax": "off",
+        "default-case": "off",
+        "no-case-declarations": "off",
+        "@typescript-eslint/no-shadow": [
+            "error",
+            {
+                "allow": [
+                    "data"
+                ]
+            }
+        ],
+        "import/extensions": [
+            "error",
+            "ignorePackages",
+            {
+                "ts": "never",
+                "tsx": "never"
+            }
+        ]
+    },
+    "settings": {
+        "import/resolver": {
+            "node": {
+                "extensions": [
+                    ".js",
+                    ".jsx",
+                    ".ts",
+                    ".tsx"
+                ]
+            }
+        }
+    }
+}

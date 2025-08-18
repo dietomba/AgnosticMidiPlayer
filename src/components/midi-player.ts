@@ -8,7 +8,7 @@ export class MidiPlayer extends MidiPlayerBase {
 
   constructor() {
     super();
-    
+
     // Crea l'interfaccia utente
     this.container = document.createElement('div');
     this.container.classList.add('midi-player');

@@ -1,39 +1,41 @@
-import { MidiPlayerOptions } from "../interfaces/midi-player-options";
-import { MidiEvent } from "../interfaces/midi-event";
-import { MidiEventType, MetaEventType } from "../interfaces/midi-event-types";
-import { MidiParser } from "../utils/midi-parser";
-import { SimpleSynthesizer } from "../utils/simple-synthesizer";
+import { MidiPlayerOptions } from '../interfaces/midi-player-options';
+import { MidiEvent } from '../interfaces/midi-event';
+import { MidiEventType, MetaEventType } from '../interfaces/midi-event-types';
+import { MidiParser } from '../utils/midi-parser';
+import { SimpleSynthesizer } from '../utils/simple-synthesizer';
+import { MidiTiming } from '../utils/midi-timing';
 
 export class MidiPlayerBase extends HTMLElement {
   protected synth: SimpleSynthesizer;
   protected isPlaying: boolean = false;
-  protected currentTime: number = 0;
-  protected duration: number = 0;
+  protected currentTick: number = 0; // Posizione corrente in ticks
+  protected currentTime: number = 0; // Posizione corrente in ms
+  protected duration: number = 0; // Durata totale in ms
   protected options: MidiPlayerOptions = {};
   protected midiData: ArrayBuffer | null = null;
   protected parsedMidiEvents: MidiEvent[] = [];
   protected playbackStartTime: number = 0;
   protected schedulerInterval: number | null = null;
-
+  protected timing: MidiTiming | null = null;
   constructor() {
     super();
-    this.attachShadow({ mode: "open" });
+    this.attachShadow({ mode: 'open' });
     this.synth = new SimpleSynthesizer();
   }
 
   static get observedAttributes() {
-    return ["src", "autoplay", "loop", "volume"];
+    return ['src', 'autoplay', 'loop', 'volume'];
   }
 
   async connectedCallback() {
     // Se src è fornito, carica il file MIDI
-    const src = this.getAttribute("src");
+    const src = this.getAttribute('src');
     if (src) {
       await this.loadMidiFile(src);
     }
 
     // Se autoplay è attivo, inizia la riproduzione
-    if (this.getAttribute("autoplay") !== null) {
+    if (this.getAttribute('autoplay') !== null) {
       this.play();
     }
   }
@@ -48,18 +50,18 @@ export class MidiPlayerBase extends HTMLElement {
     if (oldValue === newValue) return;
 
     switch (name) {
-      case "src":
+      case 'src':
         this.loadMidiFile(newValue);
         break;
-      case "autoplay":
+      case 'autoplay':
         if (newValue !== null && this.midiData) {
           this.play();
         }
         break;
-      case "loop":
+      case 'loop':
         this.options.loop = newValue !== null;
         break;
-      case "volume":
+      case 'volume':
         const volume = parseFloat(newValue);
         this.options.volume = volume;
         this.synth.setVolume(volume);
@@ -69,7 +71,7 @@ export class MidiPlayerBase extends HTMLElement {
 
   protected async loadMidiFile(src: string): Promise<void> {
     try {
-      this.dispatchEvent(new CustomEvent("loadstart"));
+      this.dispatchEvent(new CustomEvent('loadstart'));
 
       const response = await fetch(src);
       this.midiData = await response.arrayBuffer();
@@ -85,15 +87,14 @@ export class MidiPlayerBase extends HTMLElement {
 
       // Calcola la durata totale
       if (this.parsedMidiEvents.length > 0) {
-        const lastEvent =
-          this.parsedMidiEvents[this.parsedMidiEvents.length - 1];
+        const lastEvent = this.parsedMidiEvents[this.parsedMidiEvents.length - 1];
         this.duration = lastEvent.absoluteTime;
       }
 
       this.dispatchEvent(
-        new CustomEvent("loadcomplete", {
+        new CustomEvent('loadcomplete', {
           detail: { duration: this.duration },
-        })
+        }),
       );
 
       // Se autoplay è attivo, inizia la riproduzione
@@ -101,7 +102,7 @@ export class MidiPlayerBase extends HTMLElement {
         this.play();
       }
     } catch (error) {
-      this.dispatchEvent(new CustomEvent("error", { detail: error }));
+      this.dispatchEvent(new CustomEvent('error', { detail: error }));
     }
   }
 
@@ -111,7 +112,7 @@ export class MidiPlayerBase extends HTMLElement {
     this.isPlaying = true;
     this.playbackStartTime = performance.now() - this.currentTime;
     this.startScheduler();
-    this.dispatchEvent(new CustomEvent("play"));
+    this.dispatchEvent(new CustomEvent('play'));
   }
 
   public pause(): void {
@@ -121,7 +122,7 @@ export class MidiPlayerBase extends HTMLElement {
     this.currentTime = performance.now() - this.playbackStartTime;
     this.stopScheduler();
     this.synth.allNotesOff();
-    this.dispatchEvent(new CustomEvent("pause"));
+    this.dispatchEvent(new CustomEvent('pause'));
   }
 
   public stop(): void {
@@ -131,7 +132,7 @@ export class MidiPlayerBase extends HTMLElement {
     this.currentTime = 0;
     this.stopScheduler();
     this.synth.allNotesOff();
-    this.dispatchEvent(new CustomEvent("stop"));
+    this.dispatchEvent(new CustomEvent('stop'));
   }
 
   public seek(time: number): void {
@@ -147,21 +148,21 @@ export class MidiPlayerBase extends HTMLElement {
     }
 
     this.dispatchEvent(
-      new CustomEvent("timeupdate", {
+      new CustomEvent('timeupdate', {
         detail: { currentTime: this.currentTime, duration: this.duration },
-      })
+      }),
     );
   }
 
   protected parseMidiFile(data: ArrayBuffer): MidiEvent[] {
     const parser = new MidiParser(data);
     const events: MidiEvent[] = [];
-    let absoluteTime = 0;
+    let absoluteTick = 0;
 
     // Leggi l'header MIDI
     const headerChunk = parser.readString(4);
-    if (headerChunk !== "MThd") {
-      throw new Error("Invalid MIDI file: missing MThd header");
+    if (headerChunk !== 'MThd') {
+      throw new Error('Invalid MIDI file: missing MThd header');
     }
 
     const headerLength = parser.readUint32();
@@ -169,13 +170,110 @@ export class MidiPlayerBase extends HTMLElement {
     const trackCount = parser.readUint16();
     const timeDivision = parser.readUint16();
 
+    // Inizializza il sistema di timing
+    this.timing = new MidiTiming(timeDivision);
+
     // Per ogni traccia
     for (let track = 0; track < trackCount; track++) {
       const trackChunk = parser.readString(4);
-      if (trackChunk !== "MTrk") {
-        throw new Error(
-          `Invalid MIDI file: missing MTrk header for track ${track}`
-        );
+      if (trackChunk !== 'MTrk') {
+        throw new Error(`Invalid MIDI file: missing MTrk header for track ${track}`);
+      }
+
+      const trackLength = parser.readUint32();
+      const trackEnd = parser.position + trackLength;
+      absoluteTick = 0; // Reset per ogni traccia
+
+      // Leggi gli eventi della traccia
+      while (parser.position < trackEnd) {
+        const deltaTime = parser.readVarInt();
+        absoluteTick += deltaTime;
+
+        let eventType = parser.readUint8();
+
+        // Gestione Running Status
+        if ((eventType & 0x80) === 0) {
+          parser.position--;
+          eventType = events[events.length - 1].type;
+        }
+
+        if (eventType === MidiEventType.META) {
+          const metaType = parser.readUint8();
+          const length = parser.readVarInt();
+          const data = new Uint8Array(length);
+
+          for (let i = 0; i < length; i++) {
+            data[i] = parser.readUint8();
+          }
+
+          // Se è un evento di tempo, aggiornalo nel timing
+          if (metaType === MetaEventType.SET_TEMPO) {
+            const tempo = (data[0] << 16) | (data[1] << 8) | data[2];
+            this.timing.addTempoChange(absoluteTick, tempo);
+          }
+
+          events.push({
+            type: eventType,
+            subtype: metaType,
+            deltaTime,
+            absoluteTick,
+            data: Array.from(data),
+          });
+
+          if (metaType === MetaEventType.END_OF_TRACK) {
+            break;
+          }
+        } else if (eventType === MidiEventType.SYSTEM_EXCLUSIVE) {
+          const length = parser.readVarInt();
+          parser.skip(length);
+        } else {
+          // Eventi MIDI Channel
+          const channel = eventType & 0x0f;
+          const command = eventType & 0xf0;
+
+          const data = [command | channel];
+
+          // Leggi i dati in base al tipo di comando
+          switch (command) {
+            case MidiEventType.NOTE_OFF:
+            case MidiEventType.NOTE_ON:
+            case MidiEventType.NOTE_AFTERTOUCH:
+            case MidiEventType.CONTROLLER:
+            case MidiEventType.PITCH_BEND:
+              data.push(parser.readUint8());
+              data.push(parser.readUint8());
+              break;
+
+            case MidiEventType.PROGRAM_CHANGE:
+            case MidiEventType.CHANNEL_AFTERTOUCH:
+              data.push(parser.readUint8());
+              break;
+          }
+
+          events.push({
+            type: command,
+            channel,
+            deltaTime,
+            absoluteTick,
+            data,
+          });
+        }
+      }
+    }
+
+    // Ordina gli eventi per tick e calcola i tempi assoluti
+    const sortedEvents = events.sort((a, b) => a.absoluteTick - b.absoluteTick);
+
+    // Calcola i tempi assoluti per tutti gli eventi
+    for (const event of sortedEvents) {
+      event.absoluteTime = this.timing.ticksToMilliseconds(event.absoluteTick);
+    }
+
+    return sortedEvents; // Per ogni traccia
+    for (let track = 0; track < trackCount; track++) {
+      const trackChunk = parser.readString(4);
+      if (trackChunk !== 'MTrk') {
+        throw new Error(`Invalid MIDI file: missing MTrk header for track ${track}`);
       }
 
       const trackLength = parser.readUint32();
@@ -275,9 +373,9 @@ export class MidiPlayerBase extends HTMLElement {
       // Aggiorna il tempo corrente
       this.currentTime = currentTime;
       this.dispatchEvent(
-        new CustomEvent("timeupdate", {
+        new CustomEvent('timeupdate', {
           detail: { currentTime: this.currentTime, duration: this.duration },
-        })
+        }),
       );
 
       // Controlla se la riproduzione è finita
@@ -286,7 +384,7 @@ export class MidiPlayerBase extends HTMLElement {
           this.seek(0);
         } else {
           this.stop();
-          this.dispatchEvent(new CustomEvent("ended"));
+          this.dispatchEvent(new CustomEvent('ended'));
         }
       }
     }, lookAhead);
@@ -300,23 +398,55 @@ export class MidiPlayerBase extends HTMLElement {
   }
 
   protected scheduleEvent(event: MidiEvent): void {
-    const delay =
-      event.absoluteTime - (performance.now() - this.playbackStartTime);
+    const delay = (event.absoluteTime ?? 0) - (performance.now() - this.playbackStartTime);
 
     setTimeout(() => {
       if (!this.isPlaying) return;
 
-      // Processa l'evento MIDI
-      if (event.type === MidiEventType.NOTE_ON && event.data) {
-        const [, note, velocity] = event.data;
-        if (velocity > 0) {
-          this.synth.noteOn(event.channel!, note, velocity);
-        } else {
-          this.synth.noteOff(event.channel!, note);
+      // Processa l'evento MIDI solo se abbiamo i dati necessari
+      if (!event.data || !event.channel) return;
+
+      switch (event.type) {
+        case MidiEventType.NOTE_ON: {
+          const [, note, velocity] = event.data;
+          if (velocity > 0) {
+            this.synth.noteOn(event.channel, note, velocity);
+          } else {
+            this.synth.noteOff(event.channel, note);
+          }
+          break;
         }
-      } else if (event.type === MidiEventType.NOTE_OFF && event.data) {
-        const [, note] = event.data;
-        this.synth.noteOff(event.channel!, note);
+
+        case MidiEventType.NOTE_OFF: {
+          const [, note] = event.data;
+          this.synth.noteOff(event.channel, note);
+          break;
+        }
+
+        case MidiEventType.PROGRAM_CHANGE: {
+          const [, program] = event.data;
+          this.synth.programChange(event.channel, program);
+          break;
+        }
+
+        case MidiEventType.CONTROLLER: {
+          const [, controller, value] = event.data;
+          this.synth.controlChange(event.channel, controller, value);
+          break;
+        }
+
+        case MidiEventType.PITCH_BEND: {
+          const [, lsb, msb] = event.data;
+          const value = (msb << 7) + lsb - 8192; // Converte in range -8192 a +8191
+          this.synth.pitchBend(event.channel, value);
+          break;
+        }
+
+        case MidiEventType.CHANNEL_AFTERTOUCH: {
+          const [, pressure] = event.data;
+          this.synth.channelAftertouch(event.channel, pressure);
+          break;
+        }
       }
     }, delay);
   }

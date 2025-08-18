@@ -24,7 +24,7 @@ export enum MetaEventType {
   MIDI_CHANNEL_PREFIX = 0x20,
   MIDI_PORT = 0x21,
   END_OF_TRACK = 0x2f,
-  TEMPO = 0x51,
+  SET_TEMPO = 0x51,
   SMPTE_OFFSET = 0x54,
   TIME_SIGNATURE = 0x58,
   KEY_SIGNATURE = 0x59,

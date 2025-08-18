@@ -4,5 +4,6 @@ export interface MidiEvent {
   channel?: number;
   deltaTime: number;
   data?: number[];
-  absoluteTime: number;
+  absoluteTick: number; // Posizione assoluta in ticks
+  absoluteTime?: number; // Posizione assoluta in ms (calcolata dal timing)
 }

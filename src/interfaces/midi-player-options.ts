@@ -1,12 +1,12 @@
 export interface MidiPlayerOptions {
   // Source del file MIDI (URL o ArrayBuffer)
   source?: string | ArrayBuffer;
-  
+
   // Opzioni di riproduzione
   autoplay?: boolean;
   loop?: boolean;
   volume?: number;
-  
+
   // Eventi
   onPlay?: () => void;
   onPause?: () => void;
