@@ -1,0 +1,25 @@
+{
+  "name": "agnostic-midi-player",
+  "version": "1.0.0",
+  "description": "A framework-agnostic MIDI player Web Component",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "midi",
+    "web-components",
+    "typescript",
+    "framework-agnostic"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.2.2",
+    "tslib": "^2.6.2"
+  }
+}
