@@ -1,5 +1,6 @@
 import { InstrumentDefinition, instruments } from '../interfaces/instrument-definitions';
 import { ControllerType } from '../interfaces/midi-event-types';
+import { AudioEffectsManager } from './audio-effects';
 
 interface NoteComponents {
   oscillators: OscillatorNode[];
@@ -61,9 +62,17 @@ export class SimpleSynthesizer {
 
   private workletLoaded: boolean = false;
 
+  // Audio Effects Manager
+  private effectsManager: AudioEffectsManager;
+
   constructor() {
     this.ctx = new AudioContext();
     this.masterGain = this.ctx.createGain();
+
+    // Inizializza il sistema di effetti
+    this.effectsManager = new AudioEffectsManager(this.ctx);
+    this.effectsManager.connect(this.masterGain);
+
     this.masterGain.connect(this.ctx.destination);
     this.activeNotes = new Map();
     this.channelGains = new Map();
@@ -89,9 +98,9 @@ export class SimpleSynthesizer {
       const channelGain = this.ctx.createGain();
       const channelPanner = this.ctx.createStereoPanner();
 
-      // Connetti gain -> panner -> master
+      // Connetti gain -> panner -> effects -> master
       channelGain.connect(channelPanner);
-      channelPanner.connect(this.masterGain);
+      channelPanner.connect(this.effectsManager.inputNode);
 
       this.channelGains.set(channel, channelGain);
       this.channelPanners.set(channel, channelPanner);
@@ -334,6 +343,8 @@ export class SimpleSynthesizer {
 
       case ControllerType.EFFECTS_1_DEPTH: // CC91 - Reverb Send
         this.reverbLevels.set(channel, value);
+        // Aggiorna il livello di reverb nel sistema di effetti
+        this.effectsManager.setReverbLevel(value / 127);
         if (this.useAudioWorklet) {
           this.sendToWorklet({
             type: 'controlChange',
@@ -342,11 +353,12 @@ export class SimpleSynthesizer {
             value,
           });
         }
-        // Per ora una implementazione semplificata - in futuro si possono aggiungere effetti reali
         break;
 
       case ControllerType.EFFECTS_3_DEPTH: // CC93 - Chorus Send
         this.chorusLevels.set(channel, value);
+        // Aggiorna il livello di chorus nel sistema di effetti
+        this.effectsManager.setChorusLevel(value / 127);
         if (this.useAudioWorklet) {
           this.sendToWorklet({
             type: 'controlChange',
@@ -355,7 +367,6 @@ export class SimpleSynthesizer {
             value,
           });
         }
-        // Per ora una implementazione semplificata - in futuro si possono aggiungere effetti reali
         break;
 
       case ControllerType.RESET_ALL_CONTROLLERS: // CC121 - Reset All Controllers
@@ -816,6 +827,50 @@ export class SimpleSynthesizer {
 
     // Reset modulation per tutte le note attive
     this.applyModulation(channel, 0);
+  }
+
+  // Metodi per controllare gli effetti audio
+  public setReverbParameters(params: {
+    roomSize?: number;
+    damping?: number;
+    width?: number;
+    preDelay?: number;
+    wetLevel?: number;
+  }): void {
+    this.effectsManager.reverb.updateParameters(params);
+  }
+
+  public setChorusParameters(params: {
+    rate?: number;
+    depth?: number;
+    feedback?: number;
+    delay?: number;
+    wetLevel?: number;
+  }): void {
+    this.effectsManager.chorus.updateParameters(params);
+  }
+
+  public setDelayParameters(params: {
+    time?: number;
+    feedback?: number;
+    highCut?: number;
+    wetLevel?: number;
+  }): void {
+    this.effectsManager.delay.updateParameters(params);
+  }
+
+  public setDistortionParameters(params: {
+    drive?: number;
+    tone?: number;
+    level?: number;
+    type?: 'soft' | 'hard' | 'tube' | 'fuzz';
+    wetLevel?: number;
+  }): void {
+    this.effectsManager.distortion.updateParameters(params);
+  }
+
+  public getEffectsManager(): AudioEffectsManager {
+    return this.effectsManager;
   }
 
   public allNotesOffChannel(channel: number): void {
