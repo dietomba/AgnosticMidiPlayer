@@ -88,7 +88,7 @@ export class MidiPlayerBase extends HTMLElement {
       // Calcola la durata totale
       if (this.parsedMidiEvents.length > 0) {
         const lastEvent = this.parsedMidiEvents[this.parsedMidiEvents.length - 1];
-        this.duration = lastEvent.absoluteTime;
+        this.duration = lastEvent.absoluteTime || 0;
       }
 
       this.dispatchEvent(
@@ -282,7 +282,7 @@ export class MidiPlayerBase extends HTMLElement {
       // Leggi gli eventi della traccia
       while (parser.position < trackEnd) {
         const deltaTime = parser.readVarInt();
-        absoluteTime += deltaTime;
+        absoluteTick += deltaTime;
 
         let eventType = parser.readUint8();
 
@@ -305,7 +305,7 @@ export class MidiPlayerBase extends HTMLElement {
             type: eventType,
             subtype: metaType,
             deltaTime,
-            absoluteTime,
+            absoluteTick,
             data: Array.from(data),
           });
 
@@ -343,14 +343,22 @@ export class MidiPlayerBase extends HTMLElement {
             type: command,
             channel,
             deltaTime,
-            absoluteTime,
+            absoluteTick,
             data,
           });
         }
       }
     }
 
-    return events.sort((a, b) => a.absoluteTime - b.absoluteTime);
+    // Ordina gli eventi per absoluteTick
+    events.sort((a, b) => a.absoluteTick - b.absoluteTick);
+
+    // Calcola absoluteTime per ogni evento usando il timing MIDI
+    for (const event of events) {
+      event.absoluteTime = this.timing?.ticksToMilliseconds(event.absoluteTick) || 0;
+    }
+
+    return events;
   }
 
   protected startScheduler(): void {
@@ -365,7 +373,8 @@ export class MidiPlayerBase extends HTMLElement {
 
       // Trova e schedula gli eventi nel range di tempo
       for (const event of this.parsedMidiEvents) {
-        if (event.absoluteTime >= currentTime && event.absoluteTime < endTime) {
+        const eventTime = event.absoluteTime || 0;
+        if (eventTime >= currentTime && eventTime < endTime) {
           this.scheduleEvent(event);
         }
       }
