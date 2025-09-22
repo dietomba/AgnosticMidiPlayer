@@ -3,6 +3,7 @@
  */
 export class MidiParser {
   private pos: number = 0;
+
   private view: DataView;
 
   constructor(buffer: ArrayBuffer) {

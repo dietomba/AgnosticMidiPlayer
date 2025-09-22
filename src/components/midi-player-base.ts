@@ -165,8 +165,8 @@ export class MidiPlayerBase extends HTMLElement {
       throw new Error('Invalid MIDI file: missing MThd header');
     }
 
-    const headerLength = parser.readUint32();
-    const format = parser.readUint16();
+    parser.readUint32(); // headerLength
+    parser.readUint16(); // format
     const trackCount = parser.readUint16();
     const timeDivision = parser.readUint16();
 

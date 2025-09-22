@@ -427,9 +427,7 @@ export const instruments: Record<number, InstrumentDefinition> = {
   28: {
     name: 'Electric Guitar (muted)',
     oscillatorType: 'triangle',
-    harmonics: [
-      { type: 'sine', ratio: 2, gain: 0.2 },
-    ],
+    harmonics: [{ type: 'sine', ratio: 2, gain: 0.2 }],
     envelope: {
       attack: 0.005,
       decay: 0.05,
@@ -1801,9 +1799,7 @@ export const instruments: Record<number, InstrumentDefinition> = {
   124: {
     name: 'Telephone Ring',
     oscillatorType: 'sine',
-    harmonics: [
-      { type: 'sine', ratio: 2, gain: 0.9 },
-    ],
+    harmonics: [{ type: 'sine', ratio: 2, gain: 0.9 }],
     envelope: {
       attack: 0.001,
       decay: 0.02,

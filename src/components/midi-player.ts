@@ -2,8 +2,11 @@ import { MidiPlayerBase } from './midi-player-base';
 
 export class MidiPlayer extends MidiPlayerBase {
   private container: HTMLDivElement;
+
   private playButton: HTMLButtonElement;
+
   private progressBar: HTMLProgressElement;
+
   private timeDisplay: HTMLSpanElement;
 
   constructor() {

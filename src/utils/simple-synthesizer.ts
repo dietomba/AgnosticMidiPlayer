@@ -53,10 +53,10 @@ export class SimpleSynthesizer {
 
     // Applica il pitch bend a tutte le note attive sul canale
     this.activeNotes.get(channel)?.forEach((components, note) => {
-      const baseFreq = 440 * Math.pow(2, (note - 69) / 12);
-      const newFreq = baseFreq * Math.pow(2, semitones / 12);
+      const baseFreq = 440 * 2 ** ((note - 69) / 12);
+      const newFreq = baseFreq * 2 ** (semitones / 12);
 
-      components.oscillators.forEach(osc => {
+      components.oscillators.forEach((osc) => {
         osc.frequency.setValueAtTime(newFreq, this.ctx.currentTime);
       });
     });
@@ -88,13 +88,18 @@ export class SimpleSynthesizer {
 
   private getInstrumentDefinition(program: number): InstrumentDefinition {
     // Cerca la definizione dello strumento più vicina
-    while (program >= 0 && !instruments[program]) {
-      program--;
+    let currentProgram = program;
+    while (currentProgram >= 0 && !instruments[currentProgram]) {
+      currentProgram--;
     }
-    return instruments[program] || instruments[0]; // Fallback su piano se non trovato
+    return instruments[currentProgram] || instruments[0]; // Fallback su piano se non trovato
   }
 
-  private createOscillator(frequency: number, type: OscillatorType, detune: number = 0): OscillatorNode {
+  private createOscillator(
+    frequency: number,
+    type: OscillatorType,
+    detune: number = 0,
+  ): OscillatorNode {
     const osc = this.ctx.createOscillator();
     osc.type = type;
     osc.frequency.setValueAtTime(frequency, this.ctx.currentTime);
@@ -106,7 +111,7 @@ export class SimpleSynthesizer {
 
   public noteOn(channel: number, note: number, velocity: number): void {
     // Converti nota MIDI in frequenza (A4 = nota 69 = 440Hz)
-    const frequency = 440 * Math.pow(2, (note - 69) / 12);
+    const frequency = 440 * 2 ** ((note - 69) / 12);
 
     // Prendi la definizione dello strumento per questo canale
     const program = this.programs.get(channel) || 0;
@@ -118,7 +123,7 @@ export class SimpleSynthesizer {
 
     // Crea il nodo per il guadagno della velocity
     const gain = this.ctx.createGain();
-    const velocityGain = Math.pow(velocity / 127, 2); // Risposta quadratica per la velocity
+    const velocityGain = (velocity / 127) ** 2; // Risposta quadratica per la velocity
     gain.gain.setValueAtTime(velocityGain, this.ctx.currentTime);
 
     // Crea gli oscillatori
@@ -131,10 +136,7 @@ export class SimpleSynthesizer {
     // Aggiungi le armoniche se definite
     if (instrument.harmonics) {
       for (const harmonic of instrument.harmonics) {
-        const harmonicOsc = this.createOscillator(
-          frequency * harmonic.ratio,
-          harmonic.type
-        );
+        const harmonicOsc = this.createOscillator(frequency * harmonic.ratio, harmonic.type);
         const harmonicGain = this.ctx.createGain();
         harmonicGain.gain.setValueAtTime(harmonic.gain * velocityGain, this.ctx.currentTime);
 
@@ -151,20 +153,20 @@ export class SimpleSynthesizer {
 
     // Applica l'inviluppo ADSR
     const now = this.ctx.currentTime;
-    const { attack, decay, sustain, release } = instrument.envelope;
+    const { attack, decay, sustain } = instrument.envelope;
 
     envelope.gain.setValueAtTime(0, now);
     envelope.gain.linearRampToValueAtTime(1, now + attack);
     envelope.gain.linearRampToValueAtTime(sustain, now + attack + decay);
 
     // Avvia tutti gli oscillatori
-    oscillators.forEach(osc => osc.start());
+    oscillators.forEach((osc) => osc.start());
 
     // Memorizza i componenti della nota
     this.activeNotes.get(channel)?.set(note, {
       oscillators,
       gain,
-      envelope
+      envelope,
     });
   }
 
@@ -182,20 +184,17 @@ export class SimpleSynthesizer {
       const instrument = this.getInstrumentDefinition(program);
 
       // Applica il release dell'inviluppo
-      noteComponents.envelope.gain.setValueAtTime(
-        noteComponents.envelope.gain.value,
-        now
-      );
-      noteComponents.envelope.gain.linearRampToValueAtTime(
-        0,
-        now + instrument.envelope.release
-      );
+      noteComponents.envelope.gain.setValueAtTime(noteComponents.envelope.gain.value, now);
+      noteComponents.envelope.gain.linearRampToValueAtTime(0, now + instrument.envelope.release);
 
       // Schedula lo stop degli oscillatori
-      setTimeout(() => {
-        noteComponents.oscillators.forEach(osc => osc.stop());
-        this.activeNotes.get(channel)?.delete(note);
-      }, instrument.envelope.release * 1000 + 50); // Aggiungi un piccolo margine
+      setTimeout(
+        () => {
+          noteComponents.oscillators.forEach((osc) => osc.stop());
+          this.activeNotes.get(channel)?.delete(note);
+        },
+        instrument.envelope.release * 1000 + 50,
+      ); // Aggiungi un piccolo margine
     }
   }
 

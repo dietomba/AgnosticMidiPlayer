@@ -1,6 +1,8 @@
 export class MidiTiming {
   private ticksPerQuarterNote: number;
+
   private tempoChanges: Array<{ tick: number; tempo: number }> = [];
+
   private currentTempo: number = 500000; // Default: 120 BPM (500000 microseconds per quarter note)
 
   constructor(ticksPerQuarterNote: number) {
@@ -26,7 +28,7 @@ export class MidiTiming {
   public ticksToMilliseconds(ticks: number): number {
     let milliseconds = 0;
     let currentTick = 0;
-    let currentTempo = this.currentTempo;
+    let { currentTempo } = this;
 
     // Processa tutti i cambi di tempo fino alla posizione richiesta
     for (const change of this.tempoChanges) {
@@ -55,7 +57,7 @@ export class MidiTiming {
   public millisecondsToTicks(milliseconds: number): number {
     let ticks = 0;
     let currentMs = 0;
-    let currentTempo = this.currentTempo;
+    let { currentTempo } = this;
 
     // Processa tutti i cambi di tempo
     for (const change of this.tempoChanges) {
