@@ -1,18 +1,19 @@
 {
   "name": "AgnosticMidiPlayer Development",
-  "build": {
-    "dockerfile": "Dockerfile"
-  },
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bullseye",
   "customizations": {
     "vscode": {
       "extensions": [
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "ms-vscode.vscode-typescript-tslint-plugin"
+        "ms-vscode.vscode-typescript-next"
       ]
     }
   },
-  "forwardPorts": [3000],
+  "mounts": [],
+  "forwardPorts": [
+    3000
+  ],
   "postCreateCommand": "npm install",
   "remoteUser": "node"
 }
