@@ -4,6 +4,10 @@ interface NoteComponents {
   oscillators: OscillatorNode[];
   gain: GainNode;
   envelope: GainNode;
+  filter?: BiquadFilterNode;
+  filterEnvelope?: GainNode;
+  lfoOscillator?: OscillatorNode;
+  lfoGains?: Map<string, GainNode>;
 }
 
 export class SimpleSynthesizer {
@@ -53,10 +57,10 @@ export class SimpleSynthesizer {
 
     // Applica il pitch bend a tutte le note attive sul canale
     this.activeNotes.get(channel)?.forEach((components, note) => {
-      const baseFreq = 440 * 2 ** ((note - 69) / 12);
-      const newFreq = baseFreq * 2 ** (semitones / 12);
+      const baseFreq = 440 * Math.pow(2, (note - 69) / 12);
+      const newFreq = baseFreq * Math.pow(2, semitones / 12);
 
-      components.oscillators.forEach((osc) => {
+      components.oscillators.forEach(osc => {
         osc.frequency.setValueAtTime(newFreq, this.ctx.currentTime);
       });
     });
@@ -95,11 +99,7 @@ export class SimpleSynthesizer {
     return instruments[currentProgram] || instruments[0]; // Fallback su piano se non trovato
   }
 
-  private createOscillator(
-    frequency: number,
-    type: OscillatorType,
-    detune: number = 0,
-  ): OscillatorNode {
+  private createOscillator(frequency: number, type: OscillatorType, detune: number = 0): OscillatorNode {
     const osc = this.ctx.createOscillator();
     osc.type = type;
     osc.frequency.setValueAtTime(frequency, this.ctx.currentTime);
@@ -109,9 +109,37 @@ export class SimpleSynthesizer {
     return osc;
   }
 
+  private createFilter(filterDef: NonNullable<InstrumentDefinition['filter']>): BiquadFilterNode {
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = filterDef.type;
+    filter.frequency.setValueAtTime(filterDef.frequency, this.ctx.currentTime);
+    filter.Q.setValueAtTime(filterDef.Q, this.ctx.currentTime);
+    return filter;
+  }
+
+  private createLFO(lfoDef: NonNullable<InstrumentDefinition['lfo']>): {
+    oscillator: OscillatorNode;
+    gains: Map<string, GainNode>;
+  } {
+    const lfoOsc = this.ctx.createOscillator();
+    lfoOsc.type = 'sine';
+    lfoOsc.frequency.setValueAtTime(lfoDef.frequency, this.ctx.currentTime);
+
+    const gains = new Map<string, GainNode>();
+
+    for (const target of lfoDef.targets) {
+      const lfoGain = this.ctx.createGain();
+      lfoGain.gain.setValueAtTime(lfoDef.amplitude * target.amount, this.ctx.currentTime);
+      gains.set(target.parameter, lfoGain);
+      lfoOsc.connect(lfoGain);
+    }
+
+    return { oscillator: lfoOsc, gains };
+  }
+
   public noteOn(channel: number, note: number, velocity: number): void {
     // Converti nota MIDI in frequenza (A4 = nota 69 = 440Hz)
-    const frequency = 440 * 2 ** ((note - 69) / 12);
+    const frequency = 440 * Math.pow(2, (note - 69) / 12);
 
     // Prendi la definizione dello strumento per questo canale
     const program = this.programs.get(channel) || 0;
@@ -123,7 +151,7 @@ export class SimpleSynthesizer {
 
     // Crea il nodo per il guadagno della velocity
     const gain = this.ctx.createGain();
-    const velocityGain = (velocity / 127) ** 2; // Risposta quadratica per la velocity
+    const velocityGain = Math.pow(velocity / 127, 2); // Risposta quadratica per la velocity
     gain.gain.setValueAtTime(velocityGain, this.ctx.currentTime);
 
     // Crea gli oscillatori
@@ -136,19 +164,93 @@ export class SimpleSynthesizer {
     // Aggiungi le armoniche se definite
     if (instrument.harmonics) {
       for (const harmonic of instrument.harmonics) {
-        const harmonicOsc = this.createOscillator(frequency * harmonic.ratio, harmonic.type);
+        const harmonicOsc = this.createOscillator(
+          frequency * harmonic.ratio,
+          harmonic.type
+        );
         const harmonicGain = this.ctx.createGain();
         harmonicGain.gain.setValueAtTime(harmonic.gain * velocityGain, this.ctx.currentTime);
 
         harmonicOsc.connect(harmonicGain);
-        harmonicGain.connect(envelope);
+        harmonicGain.connect(gain);
         oscillators.push(harmonicOsc);
       }
+    } else {
+      // Se non ci sono armoniche, connetti l'oscillatore principale al gain
+      mainOsc.connect(gain);
     }
 
-    // Connetti tutto insieme
-    mainOsc.connect(gain);
-    gain.connect(envelope);
+    // Crea il filtro se definito
+    let filter: BiquadFilterNode | undefined;
+    let filterEnvelope: GainNode | undefined;
+    if (instrument.filter) {
+      filter = this.createFilter(instrument.filter);
+
+      // Se c'è un envelope per il filtro, crealo
+      if (instrument.filter.envelope) {
+        filterEnvelope = this.ctx.createGain();
+        filterEnvelope.gain.setValueAtTime(0, this.ctx.currentTime);
+
+        // Applica l'envelope del filtro alla frequenza del filtro
+        const now = this.ctx.currentTime;
+        const filterEnv = instrument.filter.envelope;
+
+        filterEnvelope.gain.setValueAtTime(0, now);
+        filterEnvelope.gain.linearRampToValueAtTime(1, now + filterEnv.attack);
+        filterEnvelope.gain.linearRampToValueAtTime(filterEnv.sustain, now + filterEnv.attack + filterEnv.decay);
+
+        // Connetti l'envelope del filtro alla frequenza del filtro
+        filterEnvelope.connect(filter.frequency);
+
+        // Imposta la modulazione del filtro
+        const baseFreq = instrument.filter.frequency;
+        const modAmount = filterEnv.amount * baseFreq;
+        filter.frequency.setValueAtTime(baseFreq + modAmount * filterEnv.sustain, this.ctx.currentTime);
+      }
+
+      gain.connect(filter);
+      filter.connect(envelope);
+    } else {
+      gain.connect(envelope);
+    }
+
+    // Crea LFO se definito
+    let lfoOscillator: OscillatorNode | undefined;
+    let lfoGains: Map<string, GainNode> | undefined;
+    if (instrument.lfo) {
+      const lfo = this.createLFO(instrument.lfo);
+      lfoOscillator = lfo.oscillator;
+      lfoGains = lfo.gains;
+
+      // Connetti il LFO ai vari parametri
+      for (const target of instrument.lfo.targets) {
+        const lfoGain = lfoGains.get(target.parameter);
+        if (lfoGain) {
+          switch (target.parameter) {
+            case 'frequency':
+              // Vibrato: modula la frequenza degli oscillatori
+              oscillators.forEach(osc => {
+                lfoGain.connect(osc.frequency);
+              });
+              break;
+            case 'gain':
+              // Tremolo: modula l'ampiezza
+              lfoGain.connect(gain.gain);
+              break;
+            case 'filter':
+              // Filter sweep: modula la frequenza del filtro
+              if (filter) {
+                lfoGain.connect(filter.frequency);
+              }
+              break;
+          }
+        }
+      }
+
+      lfoOscillator.start();
+    }
+
+    // Connetti il tutto al canale
     envelope.connect(this.channelGains.get(channel) || this.masterGain);
 
     // Applica l'inviluppo ADSR
@@ -160,13 +262,17 @@ export class SimpleSynthesizer {
     envelope.gain.linearRampToValueAtTime(sustain, now + attack + decay);
 
     // Avvia tutti gli oscillatori
-    oscillators.forEach((osc) => osc.start());
+    oscillators.forEach(osc => osc.start());
 
     // Memorizza i componenti della nota
     this.activeNotes.get(channel)?.set(note, {
       oscillators,
       gain,
       envelope,
+      filter,
+      filterEnvelope,
+      lfoOscillator,
+      lfoGains
     });
   }
 
@@ -184,17 +290,35 @@ export class SimpleSynthesizer {
       const instrument = this.getInstrumentDefinition(program);
 
       // Applica il release dell'inviluppo
-      noteComponents.envelope.gain.setValueAtTime(noteComponents.envelope.gain.value, now);
-      noteComponents.envelope.gain.linearRampToValueAtTime(0, now + instrument.envelope.release);
+      noteComponents.envelope.gain.setValueAtTime(
+        noteComponents.envelope.gain.value,
+        now
+      );
+      noteComponents.envelope.gain.linearRampToValueAtTime(
+        0,
+        now + instrument.envelope.release
+      );
 
-      // Schedula lo stop degli oscillatori
-      setTimeout(
-        () => {
-          noteComponents.oscillators.forEach((osc) => osc.stop());
-          this.activeNotes.get(channel)?.delete(note);
-        },
-        instrument.envelope.release * 1000 + 50,
-      ); // Aggiungi un piccolo margine
+      // Applica il release del filtro se presente
+      if (noteComponents.filterEnvelope && instrument.filter?.envelope) {
+        noteComponents.filterEnvelope.gain.setValueAtTime(
+          noteComponents.filterEnvelope.gain.value,
+          now
+        );
+        noteComponents.filterEnvelope.gain.linearRampToValueAtTime(
+          0,
+          now + instrument.filter.envelope.release
+        );
+      }
+
+      // Schedula lo stop degli oscillatori e del LFO
+      setTimeout(() => {
+        noteComponents.oscillators.forEach(osc => osc.stop());
+        if (noteComponents.lfoOscillator) {
+          noteComponents.lfoOscillator.stop();
+        }
+        this.activeNotes.get(channel)?.delete(note);
+      }, instrument.envelope.release * 1000 + 50); // Aggiungi un piccolo margine
     }
   }
 
