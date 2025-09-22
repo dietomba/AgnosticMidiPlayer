@@ -1,4 +1,5 @@
 import { InstrumentDefinition, instruments } from '../interfaces/instrument-definitions';
+import { ControllerType } from '../interfaces/midi-event-types';
 
 interface NoteComponents {
   oscillators: OscillatorNode[];
@@ -18,6 +19,10 @@ export class SimpleSynthesizer {
   private programs: Map<number, number>;
   private pitchBendValues: Map<number, number>;
   private sustainPedals: Map<number, boolean>;
+  // Bank Select support
+  private bankSelectMSB: Map<number, number>; // CC0 values per channel
+  private bankSelectLSB: Map<number, number>; // CC32 values per channel
+  private currentBanks: Map<number, number>; // Current bank number per channel
 
   constructor() {
     this.ctx = new AudioContext();
@@ -28,6 +33,9 @@ export class SimpleSynthesizer {
     this.programs = new Map();
     this.pitchBendValues = new Map();
     this.sustainPedals = new Map();
+    this.bankSelectMSB = new Map();
+    this.bankSelectLSB = new Map();
+    this.currentBanks = new Map();
 
     // Inizializza le mappe per ogni canale MIDI
     for (let channel = 0; channel < 16; channel++) {
@@ -41,13 +49,26 @@ export class SimpleSynthesizer {
       this.programs.set(channel, 0); // Program 0 è il default (piano)
       this.pitchBendValues.set(channel, 0); // 0 = no pitch bend
       this.sustainPedals.set(channel, false); // Sustain off
+
+      // Inizializza Bank Select
+      this.bankSelectMSB.set(channel, 0); // Bank 0 MSB (General MIDI)
+      this.bankSelectLSB.set(channel, 0); // Bank 0 LSB
+      this.currentBanks.set(channel, 0); // Bank 0 (General MIDI)
     }
   }
 
   public programChange(channel: number, program: number): void {
     this.programs.set(channel, program);
-    // In futuro qui potremmo cambiare il tipo di oscillatore o aggiungere effetti
-    // basati sul program number
+    // Il program change ora utilizzerà il bank corrente per determinare lo strumento finale
+    // L'effettiva selezione dello strumento avviene in getInstrumentDefinition()
+  }
+
+  private updateCurrentBank(channel: number): void {
+    // Calcola il bank number completo da MSB e LSB
+    const msb = this.bankSelectMSB.get(channel) || 0;
+    const lsb = this.bankSelectLSB.get(channel) || 0;
+    const bank = (msb << 7) + lsb; // Combina MSB e LSB per il bank completo
+    this.currentBanks.set(channel, bank);
   }
 
   public pitchBend(channel: number, value: number): void {
@@ -68,18 +89,31 @@ export class SimpleSynthesizer {
 
   public controlChange(channel: number, controller: number, value: number): void {
     switch (controller) {
-      case 7: // Volume
+      case ControllerType.BANK_SELECT_MSB: // CC0
+        this.bankSelectMSB.set(channel, value);
+        this.updateCurrentBank(channel);
+        break;
+
+      case ControllerType.MAIN_VOLUME: // CC7 - Volume
         const channelGain = this.channelGains.get(channel);
         if (channelGain) {
           channelGain.gain.setValueAtTime(value / 127, this.ctx.currentTime);
         }
         break;
 
-      case 64: // Sustain pedal
+      case ControllerType.BANK_SELECT_LSB: // CC32
+        this.bankSelectLSB.set(channel, value);
+        this.updateCurrentBank(channel);
+        break;
+
+      case ControllerType.SUSTAIN_PEDAL: // CC64 - Sustain pedal
         this.sustainPedals.set(channel, value >= 64);
         break;
 
       // Altri controller possono essere aggiunti qui
+      default:
+        // Per controller non gestiti, non facciamo nulla per ora
+        break;
     }
   }
 
@@ -90,9 +124,29 @@ export class SimpleSynthesizer {
     });
   }
 
-  private getInstrumentDefinition(program: number): InstrumentDefinition {
+  private getInstrumentDefinition(channel: number): InstrumentDefinition {
+    const program = this.programs.get(channel) || 0;
+    const bank = this.currentBanks.get(channel) || 0;
+
+    // Calcola l'ID dello strumento basato su bank e program
+    // Per ora supportiamo solo la General MIDI (bank 0)
+    // In futuro si possono aggiungere altri banchi (bank 1 = drum kits, ecc.)
+    let instrumentId: number;
+
+    if (bank === 0) {
+      // Bank 0: General MIDI standard instruments
+      instrumentId = program;
+    } else if (bank === 128) {
+      // Bank 128: Drum kits (Standard MIDI)
+      // Per ora mappiamo tutto sui percussioni del program 0
+      instrumentId = 0; // Fallback su piano per i drum kits non implementati
+    } else {
+      // Altri banchi non supportati, usa General MIDI
+      instrumentId = program;
+    }
+
     // Cerca la definizione dello strumento più vicina
-    let currentProgram = program;
+    let currentProgram = instrumentId;
     while (currentProgram >= 0 && !instruments[currentProgram]) {
       currentProgram--;
     }
@@ -142,8 +196,7 @@ export class SimpleSynthesizer {
     const frequency = 440 * Math.pow(2, (note - 69) / 12);
 
     // Prendi la definizione dello strumento per questo canale
-    const program = this.programs.get(channel) || 0;
-    const instrument = this.getInstrumentDefinition(program);
+    const instrument = this.getInstrumentDefinition(channel);
 
     // Crea il nodo per il guadagno dell'inviluppo
     const envelope = this.ctx.createGain();
@@ -286,8 +339,7 @@ export class SimpleSynthesizer {
       }
 
       const now = this.ctx.currentTime;
-      const program = this.programs.get(channel) || 0;
-      const instrument = this.getInstrumentDefinition(program);
+      const instrument = this.getInstrumentDefinition(channel);
 
       // Applica il release dell'inviluppo
       noteComponents.envelope.gain.setValueAtTime(
@@ -340,5 +392,23 @@ export class SimpleSynthesizer {
 
   public get audioContext(): AudioContext {
     return this.ctx;
+  }
+
+  // Debug methods for Bank Select
+  public getBankInfo(channel: number): { msb: number; lsb: number; bank: number; program: number } {
+    return {
+      msb: this.bankSelectMSB.get(channel) || 0,
+      lsb: this.bankSelectLSB.get(channel) || 0,
+      bank: this.currentBanks.get(channel) || 0,
+      program: this.programs.get(channel) || 0,
+    };
+  }
+
+  public getAllBankInfo(): Map<number, { msb: number; lsb: number; bank: number; program: number }> {
+    const info = new Map();
+    for (let channel = 0; channel < 16; channel++) {
+      info.set(channel, this.getBankInfo(channel));
+    }
+    return info;
   }
 }
