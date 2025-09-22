@@ -15,6 +15,14 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
     this.pitchBends = new Map(); // channel -> pitch bend (-1 to 1)
     this.sustainPedals = new Map(); // channel -> boolean
 
+    // Nuovi controller MIDI
+    this.panValues = new Map(); // channel -> pan (-1 to 1)
+    this.modulationValues = new Map(); // channel -> modulation (0-1)
+    this.expressionValues = new Map(); // channel -> expression (0-1)
+    this.portamentoValues = new Map(); // channel -> portamento (0-1)
+    this.reverbLevels = new Map(); // channel -> reverb (0-1)
+    this.chorusLevels = new Map(); // channel -> chorus (0-1)
+
     // Bank Select support
     this.bankSelectMSB = new Map(); // channel -> MSB value
     this.bankSelectLSB = new Map(); // channel -> LSB value
@@ -30,6 +38,14 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
       this.bankSelectMSB.set(channel, 0);
       this.bankSelectLSB.set(channel, 0);
       this.currentBanks.set(channel, 0);
+
+      // Inizializza nuovi controller
+      this.panValues.set(channel, 0); // center pan
+      this.modulationValues.set(channel, 0); // no modulation
+      this.expressionValues.set(channel, 1); // full expression
+      this.portamentoValues.set(channel, 0); // portamento off
+      this.reverbLevels.set(channel, 0); // no reverb
+      this.chorusLevels.set(channel, 0); // no chorus
     }
 
     // Ascolta messaggi dal thread principale
@@ -96,6 +112,9 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
       case 'allNotesOff':
         this.allNotesOff();
         break;
+      case 'allNotesOffChannel':
+        this.allNotesOffChannel(data.channel);
+        break;
     }
   }
 
@@ -140,8 +159,17 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
         this.bankSelectMSB.set(channel, value);
         this.updateCurrentBank(channel);
         break;
+      case 1: // Modulation Wheel
+        this.modulationValues.set(channel, value / 127);
+        break;
       case 7: // Main Volume
         this.channelVolumes.set(channel, value / 127);
+        break;
+      case 10: // Pan
+        this.panValues.set(channel, (value - 64) / 64); // Convert 0-127 to -1 to 1
+        break;
+      case 11: // Expression
+        this.expressionValues.set(channel, value / 127);
         break;
       case 32: // Bank Select LSB
         this.bankSelectLSB.set(channel, value);
@@ -157,6 +185,21 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
             }
           });
         }
+        break;
+      case 65: // Portamento
+        this.portamentoValues.set(channel, value / 127);
+        break;
+      case 91: // Reverb Send
+        this.reverbLevels.set(channel, value / 127);
+        break;
+      case 93: // Chorus Send
+        this.chorusLevels.set(channel, value / 127);
+        break;
+      case 121: // Reset All Controllers
+        this.resetAllControllers(channel);
+        break;
+      case 123: // All Notes Off
+        this.allNotesOffChannel(channel);
         break;
     }
   }
@@ -211,11 +254,22 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
       if (!notes || notes.size === 0) continue;
 
       const channelVolume = this.channelVolumes.get(midiChannel) || 1.0;
+      const expression = this.expressionValues.get(midiChannel) || 1.0;
+      const panValue = this.panValues.get(midiChannel) || 0;
       const pitchBend = this.pitchBends.get(midiChannel) || 0;
+      const modulation = this.modulationValues.get(midiChannel) || 0;
 
       // Processa ogni nota attiva
       notes.forEach((noteState, noteNumber) => {
-        this.processNote(noteState, output, blockSize, channelVolume, pitchBend);
+        this.processNote(
+          noteState,
+          output,
+          blockSize,
+          channelVolume * expression,
+          pitchBend,
+          panValue,
+          modulation,
+        );
 
         // Rimuovi note che hanno completato il release
         if (noteState.envelopeState === 'release' && noteState.envelopeValue <= 0.001) {
@@ -227,14 +281,24 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
     return true;
   }
 
-  processNote(noteState, output, blockSize, channelVolume, pitchBend) {
+  processNote(
+    noteState,
+    output,
+    blockSize,
+    channelVolume,
+    pitchBend,
+    panValue = 0,
+    modulation = 0,
+  ) {
     const { instrument } = noteState;
     const sampleRate = this.sampleRate;
 
     for (let i = 0; i < blockSize; i++) {
-      // Calcola frequenza con pitch bend
+      // Calcola frequenza con pitch bend e modulation (vibrato)
       const pitchBendSemitones = pitchBend * 2; // ±2 semitoni
-      const frequency = noteState.frequency * Math.pow(2, pitchBendSemitones / 12);
+      const vibratoAmount = modulation * 0.1 * Math.sin(this.currentTime * 2 * Math.PI * 5); // 5Hz vibrato
+      const frequency =
+        noteState.frequency * Math.pow(2, (pitchBendSemitones + vibratoAmount) / 12);
 
       // Aggiorna envelope
       this.updateEnvelope(noteState, instrument.envelope, 1 / sampleRate);
@@ -279,9 +343,17 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
         sample *= noteState.aftertouch;
       }
 
-      // Aggiungi ai canali di output (mono -> stereo)
-      for (let channel = 0; channel < output.length; channel++) {
-        output[channel][i] += sample * 0.1; // Scaling per evitare clipping
+      // Calcola gain per left e right basato sul pan
+      const leftGain = Math.cos(((panValue + 1) * Math.PI) / 4);
+      const rightGain = Math.sin(((panValue + 1) * Math.PI) / 4);
+
+      // Aggiungi ai canali di output stereo con panning
+      if (output.length >= 2) {
+        output[0][i] += sample * leftGain * 0.1; // Left channel
+        output[1][i] += sample * rightGain * 0.1; // Right channel
+      } else {
+        // Fallback mono
+        output[0][i] += sample * 0.1;
       }
     }
   }
@@ -437,6 +509,28 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
     noteState.filterState.y1 = output;
 
     return output;
+  }
+
+  resetAllControllers(channel) {
+    // Reset tutti i controller al loro valore di default
+    this.panValues.set(channel, 0); // center pan
+    this.modulationValues.set(channel, 0); // no modulation
+    this.expressionValues.set(channel, 1); // full expression
+    this.portamentoValues.set(channel, 0); // portamento off
+    this.reverbLevels.set(channel, 0); // no reverb
+    this.chorusLevels.set(channel, 0); // no chorus
+    this.sustainPedals.set(channel, false); // sustain off
+    this.pitchBends.set(channel, 0); // no pitch bend
+  }
+
+  allNotesOffChannel(channel) {
+    // Ferma tutte le note sul canale specificato
+    const notes = this.activeNotes.get(channel);
+    if (notes) {
+      for (const note of notes.keys()) {
+        this.noteOff(channel, note);
+      }
+    }
   }
 }
 
