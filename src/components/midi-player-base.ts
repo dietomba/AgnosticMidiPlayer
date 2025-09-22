@@ -34,11 +34,11 @@ export class MidiPlayerBase extends HTMLElement {
         console.info('Web Component: AudioWorklet caricato e pronto');
       } else {
         // eslint-disable-next-line no-console
-        console.info('Web Component: Uso fallback con nodi standard');
+        console.info('Web Component: Using fallback with standard nodes');
       }
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.warn("Web Component: Errore nell'inizializzazione AudioWorklet:", error);
+      console.warn('Web Component: Error in AudioWorklet initialization:', error);
     }
   }
 

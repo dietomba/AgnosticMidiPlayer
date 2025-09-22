@@ -9,7 +9,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
     this.sampleRate = globalThis.sampleRate;
     this.currentTime = 0;
 
-    // Parametri MIDI per canale
+    // MIDI parameters per channel
     this.programs = new Map(); // channel -> program number
     this.channelVolumes = new Map(); // channel -> volume (0-1)
     this.pitchBends = new Map(); // channel -> pitch bend (-1 to 1)
@@ -28,7 +28,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
     this.bankSelectLSB = new Map(); // channel -> LSB value
     this.currentBanks = new Map(); // channel -> bank number
 
-    // Inizializza canali MIDI
+    // Initialize MIDI channels
     for (let channel = 0; channel < 16; channel++) {
       this.activeNotes.set(channel, new Map());
       this.programs.set(channel, 0);
@@ -39,7 +39,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
       this.bankSelectLSB.set(channel, 0);
       this.currentBanks.set(channel, 0);
 
-      // Inizializza nuovi controller
+      // Initialize new controllers
       this.panValues.set(channel, 0); // center pan
       this.modulationValues.set(channel, 0); // no modulation
       this.expressionValues.set(channel, 1); // full expression
@@ -58,7 +58,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
   }
 
   initializeInstruments() {
-    // Definizioni semplificate degli strumenti per uso nell'AudioWorklet
+    // Simplified instrument definitions for use in AudioWorklet
     return {
       0: {
         // Piano
@@ -83,7 +83,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
         },
       },
       // Altri strumenti possono essere aggiunti qui...
-      // Per ora usiamo il piano come fallback per tutti
+      // For now we use piano as fallback for all
     };
   }
 
@@ -217,7 +217,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
   }
 
   channelAftertouch(channel, pressure) {
-    // Applica pressure a tutte le note attive del canale
+    // Apply pressure to all active notes on the channel
     this.activeNotes.get(channel)?.forEach((noteState) => {
       noteState.aftertouch = pressure / 127;
     });
@@ -248,7 +248,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
       output[channel].fill(0);
     }
 
-    // Processa ogni canale MIDI
+    // Process each MIDI channel
     for (let midiChannel = 0; midiChannel < 16; midiChannel++) {
       const notes = this.activeNotes.get(midiChannel);
       if (!notes || notes.size === 0) continue;
@@ -330,15 +330,15 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
           (noteState.phase + (frequency * 2 * Math.PI) / sampleRate) % (2 * Math.PI);
       }
 
-      // Applica filtro se presente
+      // Apply filter if present
       if (instrument.filter) {
         sample = this.applyFilter(sample, noteState, instrument.filter);
       }
 
-      // Applica envelope
+      // Apply envelope
       sample *= noteState.envelopeValue * noteState.velocity * channelVolume;
 
-      // Applica aftertouch se presente
+      // Apply aftertouch if present
       if (noteState.aftertouch !== undefined) {
         sample *= noteState.aftertouch;
       }
@@ -352,7 +352,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
         output[0][i] += sample * leftGain * 0.1; // Left channel
         output[1][i] += sample * rightGain * 0.1; // Right channel
       } else {
-        // Fallback mono
+        // Mono fallback
         output[0][i] += sample * 0.1;
       }
     }
@@ -494,7 +494,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
     const normA1 = a1 / a0;
     const normA2 = a2 / a0;
 
-    // Applica il filtro
+    // Apply the filter
     const output =
       normB0 * sample +
       normB1 * noteState.filterState.x1 +
@@ -512,7 +512,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
   }
 
   resetAllControllers(channel) {
-    // Reset tutti i controller al loro valore di default
+    // Reset all controllers to their default values
     this.panValues.set(channel, 0); // center pan
     this.modulationValues.set(channel, 0); // no modulation
     this.expressionValues.set(channel, 1); // full expression
@@ -524,7 +524,7 @@ class SynthesizerWorkletProcessor extends AudioWorkletProcessor {
   }
 
   allNotesOffChannel(channel) {
-    // Ferma tutte le note sul canale specificato
+    // Stop all notes on the specified channel
     const notes = this.activeNotes.get(channel);
     if (notes) {
       for (const note of notes.keys()) {

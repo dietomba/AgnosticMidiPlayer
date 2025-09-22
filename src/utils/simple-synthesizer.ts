@@ -69,7 +69,7 @@ export class SimpleSynthesizer {
     this.ctx = new AudioContext();
     this.masterGain = this.ctx.createGain();
 
-    // Inizializza il sistema di effetti
+    // Initialize the effects system
     this.effectsManager = new AudioEffectsManager(this.ctx);
     this.effectsManager.connect(this.masterGain);
 
@@ -90,15 +90,15 @@ export class SimpleSynthesizer {
     this.bankSelectLSB = new Map();
     this.currentBanks = new Map();
 
-    // Inizializza le mappe per ogni canale MIDI
+    // Initialize maps for each MIDI channel
     for (let channel = 0; channel < 16; channel++) {
       this.activeNotes.set(channel, new Map());
 
-      // Inizializza i controlli per canale
+      // Initialize controls for channel
       const channelGain = this.ctx.createGain();
       const channelPanner = this.ctx.createStereoPanner();
 
-      // Connetti gain -> panner -> effects -> master
+      // Connect gain -> panner -> effects -> master
       channelGain.connect(channelPanner);
       channelPanner.connect(this.effectsManager.inputNode);
 
@@ -132,7 +132,7 @@ export class SimpleSynthesizer {
       // Verifica il supporto per AudioWorklet
       if (!this.ctx.audioWorklet) {
         // eslint-disable-next-line no-console
-        console.info('AudioWorklet non supportato, uso fallback con nodi standard');
+        console.info('AudioWorklet not supported, using fallback with standard nodes');
         this.useAudioWorklet = false;
         return;
       }
@@ -157,7 +157,7 @@ export class SimpleSynthesizer {
       console.info('AudioWorklet inizializzato con successo');
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.warn('Errore nel caricamento AudioWorklet, uso fallback:', error);
+      console.warn('Error loading AudioWorklet, using fallback:', error);
       this.useAudioWorklet = false;
       this.workletNode = null;
     }

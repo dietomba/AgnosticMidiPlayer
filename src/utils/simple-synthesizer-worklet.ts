@@ -1,7 +1,6 @@
 import { InstrumentDefinition, instruments } from '../interfaces/instrument-definitions';
 import {
   MidiStandardInfo,
-  bankMappings,
   gm2VariationInstruments,
   gsVariationInstruments,
   xgVariationInstruments,
@@ -24,12 +23,15 @@ export class SimpleSynthesizer {
   private masterGain: GainNode;
   private activeNotes: Map<number, Map<number, NoteComponents>>;
   private channelGains: Map<number, GainNode>;
+  private controllers: Map<number, Map<number, number>>;
   private programs: Map<number, number>;
   private pitchBendValues: Map<number, number>;
   private sustainPedals: Map<number, boolean>;
   // Bank Select support
   private bankSelectMSB: Map<number, number>; // CC0 values per channel
   private bankSelectLSB: Map<number, number>; // CC32 values per channel
+  private bankMSB: Map<number, number>; // MSB values per channel
+  private bankLSB: Map<number, number>; // LSB values per channel
   private currentBanks: Map<number, number>; // Current bank number per channel
 
   // Extended MIDI standard support
@@ -58,11 +60,14 @@ export class SimpleSynthesizer {
     this.masterGain.connect(this.ctx.destination);
     this.activeNotes = new Map();
     this.channelGains = new Map();
+    this.controllers = new Map();
     this.programs = new Map();
     this.pitchBendValues = new Map();
     this.sustainPedals = new Map();
     this.bankSelectMSB = new Map();
     this.bankSelectLSB = new Map();
+    this.bankMSB = new Map();
+    this.bankLSB = new Map();
     this.currentBanks = new Map();
 
     // Initialize MIDI standard support
@@ -80,62 +85,59 @@ export class SimpleSynthesizer {
     this.fineTuning = new Map();
     this.coarseTuning = new Map();
 
-    // Inizializza le mappe per ogni canale MIDI
+    // Initialize maps for each MIDI channel
     for (let channel = 0; channel < 16; channel++) {
-      this.activeNotes.set(channel, new Map());
+      this.controllers.set(channel, new Map());
 
-      // Inizializza i controlli per canale
-      const channelGain = this.ctx.createGain();
-      channelGain.connect(this.masterGain);
-      this.channelGains.set(channel, channelGain);
+      // Initialize controls for channel
+      const controllers = this.controllers.get(channel)!;
+      controllers.set(7, 100); // Volume
+      controllers.set(10, 64); // Pan
+      controllers.set(11, 127); // Expression
+      this.programs.set(channel, 0); // Program 0 is default (piano)
 
-      this.programs.set(channel, 0); // Program 0 è il default (piano)
-      this.pitchBendValues.set(channel, 0); // 0 = no pitch bend
-      this.sustainPedals.set(channel, false); // Sustain off
+      // Initialize Bank Select
+      this.bankMSB.set(channel, 0);
+      this.bankLSB.set(channel, 0);
 
-      // Inizializza Bank Select
-      this.bankSelectMSB.set(channel, 0); // Bank 0 MSB (General MIDI)
-      this.bankSelectLSB.set(channel, 0); // Bank 0 LSB
-      this.currentBanks.set(channel, 0); // Bank 0 (General MIDI)
-
-      // Initialize RPN/NRPN values
-      this.rpnMSB.set(channel, 0x7f); // Reset value
-      this.rpnLSB.set(channel, 0x7f); // Reset value
-      this.nrpnMSB.set(channel, 0x7f); // Reset value
-      this.nrpnLSB.set(channel, 0x7f); // Reset value
+      // Initialize RPN/NRPN for channel
+      this.rpnMSB.set(channel, 127);
+      this.rpnLSB.set(channel, 127);
+      this.nrpnMSB.set(channel, 127);
+      this.nrpnLSB.set(channel, 127);
       this.dataEntryMSB.set(channel, 0);
       this.dataEntryLSB.set(channel, 0);
+
       this.pitchBendSensitivity.set(channel, 2); // Default ±2 semitones
       this.fineTuning.set(channel, 0); // Default no fine tuning
       this.coarseTuning.set(channel, 0); // Default no coarse tuning
     }
 
-    // Prova a inizializzare AudioWorklet
+    // Try to initialize AudioWorklet
     this.initializeAudioWorklet();
   }
 
   private async initializeAudioWorklet(): Promise<void> {
     try {
-      // Verifica il supporto per AudioWorklet
+      // Verify AudioWorklet support
       if (!this.ctx.audioWorklet) {
         // eslint-disable-next-line no-console
-        console.info('AudioWorklet non supportato, uso fallback con nodi standard');
+        console.info('AudioWorklet not supported, using fallback with standard nodes');
         this.useAudioWorklet = false;
-        return;
       }
 
-      // Carica il modulo AudioWorklet
+      // Load AudioWorklet module
       const workletPath = new URL('./synthesizer-worklet.js', import.meta.url).href;
       await this.ctx.audioWorklet.addModule(workletPath);
 
-      // Crea il nodo AudioWorklet
+      // Create AudioWorklet node
       this.workletNode = new AudioWorkletNode(this.ctx, 'synthesizer-worklet', {
         numberOfInputs: 0,
         numberOfOutputs: 1,
         outputChannelCount: [2], // Stereo output
       });
 
-      // Connetti il worklet al master gain
+      // Connect worklet to master gain
       this.workletNode.connect(this.masterGain);
 
       this.workletLoaded = true;
@@ -144,7 +146,7 @@ export class SimpleSynthesizer {
       console.info('AudioWorklet inizializzato con successo');
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.warn('Errore nel caricamento AudioWorklet, uso fallback:', error);
+      console.warn('Error loading AudioWorklet, using fallback:', error);
       this.useAudioWorklet = false;
       this.workletNode = null;
     }
@@ -178,7 +180,6 @@ export class SimpleSynthesizer {
     if (this.matchesSysEx(sysexData, [0xf0, 0x7e, 0x7f, 0x09, 0x03, 0xf7])) {
       this.midiStandard = { standard: 'GM2', detected: true };
       this.detectedStandards.add('GM2');
-      return;
     }
 
     // Roland GS Reset: F0 41 10 16 12 40 00 7F 00 41 F7
@@ -197,7 +198,6 @@ export class SimpleSynthesizer {
     if (this.matchesSysEx(sysexData, [0xf0, 0x43, 0x10, 0x4c, 0x00, 0x00, 0x7e, 0x00, 0xf7])) {
       this.midiStandard = { standard: 'XG', detected: true };
       this.detectedStandards.add('XG');
-      return;
     }
   }
 
@@ -230,7 +230,7 @@ export class SimpleSynthesizer {
         program,
       });
     }
-    // Il program change ora utilizzerà il bank corrente per determinare lo strumento finale
+    // Program change will now use the current bank to determine the final instrument
     // L'effettiva selezione dello strumento avviene in getInstrumentDefinition()
   }
 
@@ -263,7 +263,7 @@ export class SimpleSynthesizer {
       const coarseTuning = this.coarseTuning.get(channel) || 0;
       const totalSemitones = semitones + coarseTuning + fineTuning / 100;
 
-      // Applica il pitch bend a tutte le note attive sul canale
+      // Apply pitch bend to all active notes on the channel
       this.activeNotes.get(channel)?.forEach((components, note) => {
         const baseFreq = 440 * 2 ** ((note - 69) / 12);
         const newFreq = baseFreq * 2 ** (totalSemitones / 12);
@@ -364,7 +364,7 @@ export class SimpleSynthesizer {
         pressure,
       });
     } else {
-      // Applica l'aftertouch a tutte le note attive sul canale
+      // Apply aftertouch to all active notes on the channel
       this.activeNotes.get(channel)?.forEach((components) => {
         components.gain.gain.setValueAtTime(pressure / 127, this.ctx.currentTime);
       });
@@ -613,7 +613,7 @@ export class SimpleSynthesizer {
     // Converti nota MIDI in frequenza (A4 = nota 69 = 440Hz)
     const frequency = 440 * 2 ** ((note - 69) / 12);
 
-    // Prendi la definizione dello strumento per questo canale
+    // Get the instrument definition for this channel
     const instrument = this.getInstrumentDefinition(channel);
 
     // Crea il nodo per il guadagno dell'inviluppo
