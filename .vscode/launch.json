@@ -6,7 +6,10 @@
       "request": "launch",
       "name": "Build Project",
       "program": "${workspaceFolder}/node_modules/.bin/tsc",
-      "args": ["-p", "."],
+      "args": [
+        "-p",
+        "."
+      ],
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen"
     }
