@@ -449,9 +449,7 @@ export const instruments: Record<number, InstrumentDefinition> = {
   28: {
     name: 'Electric Guitar (muted)',
     oscillatorType: 'triangle',
-    harmonics: [
-      { type: 'sine', ratio: 2, gain: 0.2 },
-    ],
+    harmonics: [{ type: 'sine', ratio: 2, gain: 0.2 }],
     envelope: {
       attack: 0.005,
       decay: 0.05,
@@ -867,16 +865,16 @@ export const instruments: Record<number, InstrumentDefinition> = {
         decay: 0.05,
         sustain: 0.7,
         release: 0.1,
-        amount: 0.8
-      }
+        amount: 0.8,
+      },
     },
     lfo: {
       frequency: 5,
       amplitude: 0.3,
       targets: [
-        { parameter: 'frequency', amount: 0.1 } // Vibrato leggero
-      ]
-    }
+        { parameter: 'frequency', amount: 0.1 }, // Vibrato leggero
+      ],
+    },
   },
   57: {
     name: 'Trombone',
@@ -894,16 +892,16 @@ export const instruments: Record<number, InstrumentDefinition> = {
     filter: {
       type: 'bandpass',
       frequency: 800,
-      Q: 2.0
+      Q: 2.0,
     },
     lfo: {
       frequency: 6,
       amplitude: 0.4,
       targets: [
         { parameter: 'gain', amount: 0.2 }, // Tremolo
-        { parameter: 'filter', amount: 0.3 } // Filter sweep
-      ]
-    }
+        { parameter: 'filter', amount: 0.3 }, // Filter sweep
+      ],
+    },
   },
   58: {
     name: 'Tuba',
@@ -1255,17 +1253,17 @@ export const instruments: Record<number, InstrumentDefinition> = {
         decay: 0.1,
         sustain: 0.6,
         release: 0.2,
-        amount: -0.5 // Modulazione negativa per effetto sweep down
-      }
+        amount: -0.5, // Modulazione negativa per effetto sweep down
+      },
     },
     lfo: {
       frequency: 4.5,
       amplitude: 0.5,
       targets: [
         { parameter: 'frequency', amount: 0.15 }, // Vibrato
-        { parameter: 'filter', amount: 0.4 } // Filter sweep dinamico
-      ]
-    }
+        { parameter: 'filter', amount: 0.4 }, // Filter sweep dinamico
+      ],
+    },
   },
   82: {
     name: 'Lead 3 (calliope)',
@@ -1875,9 +1873,7 @@ export const instruments: Record<number, InstrumentDefinition> = {
   124: {
     name: 'Telephone Ring',
     oscillatorType: 'sine',
-    harmonics: [
-      { type: 'sine', ratio: 2, gain: 0.9 },
-    ],
+    harmonics: [{ type: 'sine', ratio: 2, gain: 0.9 }],
     envelope: {
       attack: 0.001,
       decay: 0.02,

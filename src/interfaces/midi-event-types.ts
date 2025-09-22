@@ -10,6 +10,9 @@ export enum MidiEventType {
   META = 0xff,
 }
 
+// Alias for convenience
+export const SYSEX = MidiEventType.SYSTEM_EXCLUSIVE;
+
 export enum MetaEventType {
   SEQUENCE_NUMBER = 0x00,
   TEXT = 0x01,

@@ -475,6 +475,14 @@ export class MidiPlayerBase extends HTMLElement {
           this.synth.channelAftertouch(event.channel, pressure);
           break;
         }
+
+        case MidiEventType.SYSTEM_EXCLUSIVE: {
+          // Handle SysEx for format detection
+          if (event.data && this.synth.detectMidiStandard) {
+            this.synth.detectMidiStandard(Array.from(event.data));
+          }
+          break;
+        }
       }
     }, delay);
   }

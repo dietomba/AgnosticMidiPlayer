@@ -717,6 +717,13 @@ export class SimpleSynthesizer {
     }
   }
 
+  // Stub method for MIDI standard detection (extended in worklet version)
+  public detectMidiStandard(sysexData: number[]): void {
+    // eslint-disable-next-line no-console
+    console.log('MIDI Standard detection:', sysexData);
+    // Base implementation does nothing, extended in SimpleSynthesizerWorklet
+  }
+
   public setVolume(value: number): void {
     this.masterGain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.015);
   }

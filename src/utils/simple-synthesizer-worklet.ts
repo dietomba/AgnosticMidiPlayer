@@ -1,4 +1,12 @@
 import { InstrumentDefinition, instruments } from '../interfaces/instrument-definitions';
+import {
+  MidiStandardInfo,
+  bankMappings,
+  gm2VariationInstruments,
+  gsVariationInstruments,
+  xgVariationInstruments,
+  gm2DrumKits,
+} from '../interfaces/extended-instrument-definitions';
 import { ControllerType } from '../interfaces/midi-event-types';
 
 interface NoteComponents {
@@ -24,6 +32,21 @@ export class SimpleSynthesizer {
   private bankSelectLSB: Map<number, number>; // CC32 values per channel
   private currentBanks: Map<number, number>; // Current bank number per channel
 
+  // Extended MIDI standard support
+  private midiStandard: MidiStandardInfo;
+  private detectedStandards: Set<string>;
+
+  // RPN/NRPN support for GM2/GS/XG
+  private rpnMSB: Map<number, number>; // RPN MSB per channel (CC101)
+  private rpnLSB: Map<number, number>; // RPN LSB per channel (CC100)
+  private nrpnMSB: Map<number, number>; // NRPN MSB per channel (CC99)
+  private nrpnLSB: Map<number, number>; // NRPN LSB per channel (CC98)
+  private dataEntryMSB: Map<number, number>; // Data Entry MSB per channel (CC6)
+  private dataEntryLSB: Map<number, number>; // Data Entry LSB per channel (CC38)
+  private pitchBendSensitivity: Map<number, number>; // Pitch bend range in semitones per channel
+  private fineTuning: Map<number, number>; // Fine tuning in cents per channel
+  private coarseTuning: Map<number, number>; // Coarse tuning in semitones per channel
+
   // AudioWorklet support
   private useAudioWorklet: boolean = false;
   private workletNode: AudioWorkletNode | null = null;
@@ -42,6 +65,21 @@ export class SimpleSynthesizer {
     this.bankSelectLSB = new Map();
     this.currentBanks = new Map();
 
+    // Initialize MIDI standard support
+    this.midiStandard = { standard: 'GM', detected: false };
+    this.detectedStandards = new Set(['GM']); // Default to GM
+
+    // Initialize RPN/NRPN maps
+    this.rpnMSB = new Map();
+    this.rpnLSB = new Map();
+    this.nrpnMSB = new Map();
+    this.nrpnLSB = new Map();
+    this.dataEntryMSB = new Map();
+    this.dataEntryLSB = new Map();
+    this.pitchBendSensitivity = new Map();
+    this.fineTuning = new Map();
+    this.coarseTuning = new Map();
+
     // Inizializza le mappe per ogni canale MIDI
     for (let channel = 0; channel < 16; channel++) {
       this.activeNotes.set(channel, new Map());
@@ -59,6 +97,17 @@ export class SimpleSynthesizer {
       this.bankSelectMSB.set(channel, 0); // Bank 0 MSB (General MIDI)
       this.bankSelectLSB.set(channel, 0); // Bank 0 LSB
       this.currentBanks.set(channel, 0); // Bank 0 (General MIDI)
+
+      // Initialize RPN/NRPN values
+      this.rpnMSB.set(channel, 0x7f); // Reset value
+      this.rpnLSB.set(channel, 0x7f); // Reset value
+      this.nrpnMSB.set(channel, 0x7f); // Reset value
+      this.nrpnLSB.set(channel, 0x7f); // Reset value
+      this.dataEntryMSB.set(channel, 0);
+      this.dataEntryLSB.set(channel, 0);
+      this.pitchBendSensitivity.set(channel, 2); // Default ±2 semitones
+      this.fineTuning.set(channel, 0); // Default no fine tuning
+      this.coarseTuning.set(channel, 0); // Default no coarse tuning
     }
 
     // Prova a inizializzare AudioWorklet
@@ -116,6 +165,55 @@ export class SimpleSynthesizer {
     }
   }
 
+  // MIDI Standard Detection and Support
+  public detectMidiStandard(sysexData: number[]): void {
+    // GM Reset: F0 7E 7F 09 01 F7
+    if (this.matchesSysEx(sysexData, [0xf0, 0x7e, 0x7f, 0x09, 0x01, 0xf7])) {
+      this.midiStandard = { standard: 'GM', detected: true };
+      this.detectedStandards.add('GM');
+      return;
+    }
+
+    // GM2 System On: F0 7E 7F 09 03 F7
+    if (this.matchesSysEx(sysexData, [0xf0, 0x7e, 0x7f, 0x09, 0x03, 0xf7])) {
+      this.midiStandard = { standard: 'GM2', detected: true };
+      this.detectedStandards.add('GM2');
+      return;
+    }
+
+    // Roland GS Reset: F0 41 10 16 12 40 00 7F 00 41 F7
+    if (
+      this.matchesSysEx(
+        sysexData,
+        [0xf0, 0x41, 0x10, 0x16, 0x12, 0x40, 0x00, 0x7f, 0x00, 0x41, 0xf7],
+      )
+    ) {
+      this.midiStandard = { standard: 'GS', detected: true };
+      this.detectedStandards.add('GS');
+      return;
+    }
+
+    // Yamaha XG System On: F0 43 10 4C 00 00 7E 00 F7
+    if (this.matchesSysEx(sysexData, [0xf0, 0x43, 0x10, 0x4c, 0x00, 0x00, 0x7e, 0x00, 0xf7])) {
+      this.midiStandard = { standard: 'XG', detected: true };
+      this.detectedStandards.add('XG');
+      return;
+    }
+  }
+
+  private matchesSysEx(data: number[], pattern: number[]): boolean {
+    if (data.length !== pattern.length) return false;
+    return data.every((byte, index) => byte === pattern[index]);
+  }
+
+  public getMidiStandardInfo(): MidiStandardInfo {
+    return { ...this.midiStandard };
+  }
+
+  public getDetectedStandards(): string[] {
+    return Array.from(this.detectedStandards);
+  }
+
   private sendToWorklet(message: { type: string; [key: string]: unknown }): void {
     if (this.useAudioWorklet && this.workletNode) {
       this.workletNode.port.postMessage(message);
@@ -153,15 +251,22 @@ export class SimpleSynthesizer {
         type: 'pitchBend',
         channel,
         value,
+        sensitivity: this.pitchBendSensitivity.get(channel) || 2,
       });
     } else {
-      // Logica originale per i nodi standard
-      const semitones = (value / 8192) * 2; // ±2 semitoni di range
+      // Use channel-specific pitch bend sensitivity
+      const sensitivity = this.pitchBendSensitivity.get(channel) || 2;
+      const semitones = (value / 8192) * sensitivity;
+
+      // Apply fine tuning and coarse tuning
+      const fineTuning = this.fineTuning.get(channel) || 0;
+      const coarseTuning = this.coarseTuning.get(channel) || 0;
+      const totalSemitones = semitones + coarseTuning + fineTuning / 100;
 
       // Applica il pitch bend a tutte le note attive sul canale
       this.activeNotes.get(channel)?.forEach((components, note) => {
         const baseFreq = 440 * 2 ** ((note - 69) / 12);
-        const newFreq = baseFreq * 2 ** (semitones / 12);
+        const newFreq = baseFreq * 2 ** (totalSemitones / 12);
 
         components.oscillators.forEach((osc) => {
           osc.frequency.setValueAtTime(newFreq, this.ctx.currentTime);
@@ -198,6 +303,16 @@ export class SimpleSynthesizer {
         this.updateCurrentBank(channel);
         break;
 
+      case 6: // CC6 - Data Entry MSB
+        this.dataEntryMSB.set(channel, value);
+        this.processRpnNrpnData(channel);
+        break;
+
+      case 38: // CC38 - Data Entry LSB
+        this.dataEntryLSB.set(channel, value);
+        this.processRpnNrpnData(channel);
+        break;
+
       case ControllerType.SUSTAIN_PEDAL: // CC64 - Sustain pedal
         this.sustainPedals.set(channel, value >= 64);
         if (this.useAudioWorklet) {
@@ -208,6 +323,22 @@ export class SimpleSynthesizer {
             value,
           });
         }
+        break;
+
+      case 98: // CC98 - NRPN LSB
+        this.nrpnLSB.set(channel, value);
+        break;
+
+      case 99: // CC99 - NRPN MSB
+        this.nrpnMSB.set(channel, value);
+        break;
+
+      case 100: // CC100 - RPN LSB
+        this.rpnLSB.set(channel, value);
+        break;
+
+      case 101: // CC101 - RPN MSB
+        this.rpnMSB.set(channel, value);
         break;
 
       // Altri controller possono essere aggiunti qui
@@ -240,33 +371,189 @@ export class SimpleSynthesizer {
     }
   }
 
+  private processRpnNrpnData(channel: number): void {
+    const rpnMSB = this.rpnMSB.get(channel) || 0x7f;
+    const rpnLSB = this.rpnLSB.get(channel) || 0x7f;
+    const nrpnMSB = this.nrpnMSB.get(channel) || 0x7f;
+    const nrpnLSB = this.nrpnLSB.get(channel) || 0x7f;
+    const dataEntryMSB = this.dataEntryMSB.get(channel) || 0;
+    const dataEntryLSB = this.dataEntryLSB.get(channel) || 0;
+
+    // Process RPN (Registered Parameter Numbers)
+    if (rpnMSB !== 0x7f || rpnLSB !== 0x7f) {
+      const rpnValue = (rpnMSB << 7) | rpnLSB;
+      const dataValue = (dataEntryMSB << 7) | dataEntryLSB;
+
+      switch (rpnValue) {
+        case 0x0000: // Pitch Bend Sensitivity
+          this.pitchBendSensitivity.set(channel, dataEntryMSB);
+          break;
+
+        case 0x0001: // Fine Tuning
+          // Convert from 14-bit signed to cents (-100 to +100 cents)
+          const fineTuningCents = ((dataValue - 8192) / 8192) * 100;
+          this.fineTuning.set(channel, fineTuningCents);
+          break;
+
+        case 0x0002: // Coarse Tuning
+          // Convert from MSB to semitones (-64 to +63 semitones)
+          const coarseTuningSemitones = dataEntryMSB - 64;
+          this.coarseTuning.set(channel, coarseTuningSemitones);
+          break;
+
+        case 0x0003: // Tuning Program Select (GM2)
+          if (this.detectedStandards.has('GM2') || this.midiStandard.standard === 'GM2') {
+            // Handle tuning program selection for GM2
+            // eslint-disable-next-line no-console
+            console.log(`GM2 Tuning Program ${dataEntryMSB} selected for channel ${channel}`);
+          }
+          break;
+
+        case 0x0004: // Tuning Bank Select (GM2)
+          if (this.detectedStandards.has('GM2') || this.midiStandard.standard === 'GM2') {
+            // Handle tuning bank selection for GM2
+            // eslint-disable-next-line no-console
+            console.log(`GM2 Tuning Bank ${dataEntryMSB} selected for channel ${channel}`);
+          }
+          break;
+      }
+    }
+
+    // Process NRPN (Non-Registered Parameter Numbers)
+    if (nrpnMSB !== 0x7f || nrpnLSB !== 0x7f) {
+      const nrpnValue = (nrpnMSB << 7) | nrpnLSB;
+      const dataValue = (dataEntryMSB << 7) | dataEntryLSB;
+
+      // Roland GS NRPN
+      if (this.detectedStandards.has('GS') || this.midiStandard.standard === 'GS') {
+        this.processGsNrpn(channel, nrpnValue, dataValue);
+      }
+
+      // Yamaha XG NRPN
+      if (this.detectedStandards.has('XG') || this.midiStandard.standard === 'XG') {
+        this.processXgNrpn(channel, nrpnValue, dataValue);
+      }
+    }
+  }
+
+  private processGsNrpn(channel: number, nrpnValue: number, dataValue: number): void {
+    // Roland GS specific NRPN parameters
+    switch (nrpnValue) {
+      case 0x0108: // Vibrato Rate
+        // eslint-disable-next-line no-console
+        console.log(`GS Vibrato Rate ${dataValue} for channel ${channel}`);
+        break;
+      case 0x0109: // Vibrato Depth
+        // eslint-disable-next-line no-console
+        console.log(`GS Vibrato Depth ${dataValue} for channel ${channel}`);
+        break;
+      case 0x010a: // Vibrato Delay
+        // eslint-disable-next-line no-console
+        console.log(`GS Vibrato Delay ${dataValue} for channel ${channel}`);
+        break;
+      case 0x0120: // Filter Cutoff
+        // eslint-disable-next-line no-console
+        console.log(`GS Filter Cutoff ${dataValue} for channel ${channel}`);
+        break;
+      case 0x0121: // Filter Resonance
+        // eslint-disable-next-line no-console
+        console.log(`GS Filter Resonance ${dataValue} for channel ${channel}`);
+        break;
+    }
+  }
+
+  private processXgNrpn(channel: number, nrpnValue: number, dataValue: number): void {
+    // Yamaha XG specific NRPN parameters
+    switch (nrpnValue) {
+      case 0x0108: // Vibrato Rate
+        // eslint-disable-next-line no-console
+        console.log(`XG Vibrato Rate ${dataValue} for channel ${channel}`);
+        break;
+      case 0x0109: // Vibrato Depth
+        // eslint-disable-next-line no-console
+        console.log(`XG Vibrato Depth ${dataValue} for channel ${channel}`);
+        break;
+      case 0x010a: // Vibrato Delay
+        // eslint-disable-next-line no-console
+        console.log(`XG Vibrato Delay ${dataValue} for channel ${channel}`);
+        break;
+      case 0x0120: // Filter Cutoff Frequency
+        // eslint-disable-next-line no-console
+        console.log(`XG Filter Cutoff ${dataValue} for channel ${channel}`);
+        break;
+      case 0x0121: // Filter Resonance
+        // eslint-disable-next-line no-console
+        console.log(`XG Filter Resonance ${dataValue} for channel ${channel}`);
+        break;
+    }
+  }
+
   private getInstrumentDefinition(channel: number): InstrumentDefinition {
     const program = this.programs.get(channel) || 0;
     const bank = this.currentBanks.get(channel) || 0;
 
-    // Calcola l'ID dello strumento basato su bank e program
-    // Per ora supportiamo solo la General MIDI (bank 0)
-    // In futuro si possono aggiungere altri banchi (bank 1 = drum kits, ecc.)
+    // Check for extended bank instruments first
+    let instrumentDef = this.getExtendedInstrument(bank, program);
+    if (instrumentDef) {
+      return instrumentDef;
+    }
+
+    // Fallback to standard behavior
     let instrumentId: number;
 
     if (bank === 0) {
       // Bank 0: General MIDI standard instruments
       instrumentId = program;
     } else if (bank === 128) {
-      // Bank 128: Drum kits (Standard MIDI)
-      // Per ora mappiamo tutto sui percussioni del program 0
-      instrumentId = 0; // Fallback su piano per i drum kits non implementati
+      // Bank 128: Drum kits - check for GM2 drum kits
+      instrumentDef = this.getDrumKitInstrument(program, 36); // Default kick drum
+      if (instrumentDef) {
+        return instrumentDef;
+      }
+      instrumentId = 0; // Fallback to piano
     } else {
-      // Altri banchi non supportati, usa General MIDI
+      // Other unsupported banks, use General MIDI
       instrumentId = program;
     }
 
-    // Cerca la definizione dello strumento più vicina
+    // Search for the closest instrument definition
     let currentProgram = instrumentId;
     while (currentProgram >= 0 && !instruments[currentProgram]) {
       currentProgram--;
     }
-    return instruments[currentProgram] || instruments[0]; // Fallback su piano se non trovato
+    return instruments[currentProgram] || instruments[0]; // Fallback to piano if not found
+  }
+
+  private getExtendedInstrument(bank: number, program: number): InstrumentDefinition | null {
+    // Check GM2 variations
+    if (bank >= 120 && bank <= 127) {
+      if (gm2VariationInstruments[bank] && gm2VariationInstruments[bank][program]) {
+        return gm2VariationInstruments[bank][program];
+      }
+    }
+
+    // Check Roland GS variations
+    if (this.detectedStandards.has('GS') || this.midiStandard.standard === 'GS') {
+      if (gsVariationInstruments[bank] && gsVariationInstruments[bank][program]) {
+        return gsVariationInstruments[bank][program];
+      }
+    }
+
+    // Check Yamaha XG variations
+    if (this.detectedStandards.has('XG') || this.midiStandard.standard === 'XG') {
+      if (xgVariationInstruments[bank] && xgVariationInstruments[bank][program]) {
+        return xgVariationInstruments[bank][program];
+      }
+    }
+
+    return null;
+  }
+
+  private getDrumKitInstrument(kitNumber: number, note: number): InstrumentDefinition | null {
+    if (gm2DrumKits[kitNumber] && gm2DrumKits[kitNumber][note]) {
+      return gm2DrumKits[kitNumber][note];
+    }
+    return null;
   }
 
   private createOscillator(

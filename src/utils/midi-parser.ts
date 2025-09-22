@@ -60,6 +60,14 @@ export class MidiParser {
     return value;
   }
 
+  public readSysEx(length: number): number[] {
+    const sysexData: number[] = [];
+    for (let i = 0; i < length; i++) {
+      sysexData.push(this.readUint8());
+    }
+    return sysexData;
+  }
+
   public skip(length: number): void {
     this.pos += length;
   }
