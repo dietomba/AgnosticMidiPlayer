@@ -11,38 +11,22 @@ interface NoteComponents {
   lfoGains?: Map<string, GainNode>;
 }
 
-interface WorkletMessage {
-  type: string;
-  [key: string]: unknown;
-}
-
 export class SimpleSynthesizer {
   private ctx: AudioContext;
-
   private masterGain: GainNode;
-
   private activeNotes: Map<number, Map<number, NoteComponents>>;
-
   private channelGains: Map<number, GainNode>;
-
   private programs: Map<number, number>;
-
   private pitchBendValues: Map<number, number>;
-
   private sustainPedals: Map<number, boolean>;
-
   // Bank Select support
   private bankSelectMSB: Map<number, number>; // CC0 values per channel
-
   private bankSelectLSB: Map<number, number>; // CC32 values per channel
-
   private currentBanks: Map<number, number>; // Current bank number per channel
 
   // AudioWorklet support
   private useAudioWorklet: boolean = false;
-
   private workletNode: AudioWorkletNode | null = null;
-
   private workletLoaded: boolean = false;
 
   constructor() {
@@ -132,7 +116,7 @@ export class SimpleSynthesizer {
     }
   }
 
-  private sendToWorklet(message: WorkletMessage): void {
+  private sendToWorklet(message: { type: string; [key: string]: unknown }): void {
     if (this.useAudioWorklet && this.workletNode) {
       this.workletNode.port.postMessage(message);
     }
@@ -176,8 +160,8 @@ export class SimpleSynthesizer {
 
       // Applica il pitch bend a tutte le note attive sul canale
       this.activeNotes.get(channel)?.forEach((components, note) => {
-        const baseFreq = 440 * ((note - 69) / 12) ** 2;
-        const newFreq = baseFreq * (semitones / 12) ** 2;
+        const baseFreq = 440 * 2 ** ((note - 69) / 12);
+        const newFreq = baseFreq * 2 ** (semitones / 12);
 
         components.oscillators.forEach((osc) => {
           osc.frequency.setValueAtTime(newFreq, this.ctx.currentTime);
@@ -340,7 +324,7 @@ export class SimpleSynthesizer {
 
     // Logica originale per i nodi standard
     // Converti nota MIDI in frequenza (A4 = nota 69 = 440Hz)
-    const frequency = 440 * ((note - 69) / 12) ** 2;
+    const frequency = 440 * 2 ** ((note - 69) / 12);
 
     // Prendi la definizione dello strumento per questo canale
     const instrument = this.getInstrumentDefinition(channel);

@@ -21,6 +21,25 @@ export class MidiPlayerBase extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.synth = new SimpleSynthesizer();
+
+    // Aspetta che l'AudioWorklet sia pronto se disponibile
+    this.initializeAudioWorklet();
+  }
+
+  private async initializeAudioWorklet(): Promise<void> {
+    try {
+      await this.synth.waitForWorkletReady();
+      if (this.synth.isUsingAudioWorklet) {
+        // eslint-disable-next-line no-console
+        console.info('Web Component: AudioWorklet caricato e pronto');
+      } else {
+        // eslint-disable-next-line no-console
+        console.info('Web Component: Uso fallback con nodi standard');
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn("Web Component: Errore nell'inizializzazione AudioWorklet:", error);
+    }
   }
 
   static get observedAttributes() {
@@ -471,5 +490,13 @@ export class MidiPlayerBase extends HTMLElement {
 
   public get isPlayingValue(): boolean {
     return this.isPlaying;
+  }
+
+  public get isUsingAudioWorklet(): boolean {
+    return this.synth.isUsingAudioWorklet;
+  }
+
+  public async setUseAudioWorklet(use: boolean): Promise<void> {
+    await this.synth.setUseAudioWorklet(use);
   }
 }
